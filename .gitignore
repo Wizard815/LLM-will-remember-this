@@ -1,0 +1,11 @@
+.obsidian/workspace*.json
+.obsidian/cache
+.obsidian/plugins/obsidian-local-rest-api/data.json
+.smart-env/
+.trash/
+.DS_Store
+.obsidian/plugins/local-rest-api-second-brain-mcp-extension/embeddings-cache.json
+.obsidian/plugins/llmwiki-mcp-bridge/data.json
+.obsidian/plugins/karpathywiki/data.json
+people/
+schema/.network-private.md
