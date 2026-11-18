@@ -1,0 +1,9 @@
+{
+	"id": "llmwiki-mcp-bridge",
+	"name": "LLMWIKI MCP Bridge",
+	"version": "1.0.0",
+	"minAppVersion": "1.4.0",
+	"description": "Registers the Second Brain semantic wiki tools (query_wiki, get_wiki, wiki_card) directly into the Local REST API's built-in /mcp/ endpoint, so MCP clients need only one server entry.",
+	"author": "LLMWIKI",
+	"isDesktopOnly": true
+}

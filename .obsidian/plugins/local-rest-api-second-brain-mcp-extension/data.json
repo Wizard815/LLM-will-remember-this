@@ -1,0 +1,15 @@
+{
+  "modelName": "custom",
+  "customModelName": "onnx-community/Qwen3-Embedding-0.6B-ONNX",
+  "cachedModelName": "",
+  "returnDiagnosticLogs": false,
+  "wikiPurpose": "",
+  "allowedPathPatterns": [
+    "^household/wiki/",
+    "^people/[^/]+/wiki/"
+  ],
+  "excludedPathPatterns": [
+    "^wiki/index\\.md$",
+    "^wiki/log\\.md$"
+  ]
+}
