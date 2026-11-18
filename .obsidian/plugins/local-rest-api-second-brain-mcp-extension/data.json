@@ -1,7 +1,7 @@
 {
-  "modelName": "custom",
+  "modelName": "Xenova/bge-small-en-v1.5",
   "customModelName": "onnx-community/Qwen3-Embedding-0.6B-ONNX",
-  "cachedModelName": "",
+  "cachedModelName": "Xenova/bge-small-en-v1.5",
   "returnDiagnosticLogs": false,
   "wikiPurpose": "",
   "allowedPathPatterns": [

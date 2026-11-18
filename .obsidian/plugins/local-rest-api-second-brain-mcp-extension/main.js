@@ -88921,9 +88921,24 @@ var ObsidianLocalRESTAPISecondBrainPlugin = class extends import_obsidian3.Plugi
     await this.loadSettings();
     await this.resolvePluginDirectory();
     this.addSettingTab(new ObsidianLocalRESTAPISecondBrainSettingsTab(this.app, this));
-    this.initializeSearchEngine().catch((err) => {
-      console.error("[Second Brain MCP] Initial search engine startup failed:", err);
-    });
+    // Manual patch 2026-11-18: initializeSearchEngine() used to fire here, unawaited, which
+    // raced Obsidian's own vault enumeration on every boot and could permanently lock in a
+    // partial file list (getMarkdownFiles() mid-scan, before metadataCache's initial resolve
+    // pass finishes). metadataCache "resolved" fires once that pass is complete, which is the
+    // actual signal getMarkdownFiles() needs. Reapply this patch if the plugin is ever updated.
+    const startSecondBrainIndexing = () => {
+      this.initializeSearchEngine().catch((err) => {
+        console.error("[Second Brain MCP] Initial search engine startup failed:", err);
+      });
+    };
+    if (this.app.metadataCache.resolved) {
+      startSecondBrainIndexing();
+    } else {
+      const resolvedRef = this.app.metadataCache.on("resolved", () => {
+        this.app.metadataCache.offref(resolvedRef);
+        startSecondBrainIndexing();
+      });
+    }
     if (this.app.plugins.enabledPlugins.has("obsidian-local-rest-api")) {
       this.registerRoutes();
     }
