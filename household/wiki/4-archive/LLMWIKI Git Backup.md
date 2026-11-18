@@ -2,10 +2,10 @@
 title: "LLMWIKI Git Backup"
 type: project
 area: knowledge
-project_status: active
+project_status: done
 tags: [wiki, project]
 created: 2026-10-27
-updated: 2026-10-28
+updated: 2026-11-18
 source: manual
 status: reviewed
 related: ["[[LLMWIKI]]", "[[agents]]"]
@@ -35,17 +35,22 @@ The vault has **no version history**. In the 2026-10-27 cleanup, 50+ notes were 
 .smart-env/
 .trash/
 .DS_Store
+.obsidian/plugins/local-rest-api-second-brain-mcp-extension/embeddings-cache.json
+.obsidian/plugins/llmwiki-mcp-bridge/data.json
+.obsidian/plugins/karpathywiki/data.json
+people/
+schema/.network-private.md
 ```
 
-(Keep the rest of `.obsidian/`. The Local REST API plugin's `data.json` **does** contain its API key — checked 2026-10-28 — so it is ignored.)
+(Keep the rest of `.obsidian/`. The Local REST API plugin's `data.json` **does** contain its API key — checked 2026-10-28 — so it is ignored. `people/` and `schema/.network-private.md` were added 2026-11-18 — see rule 15.)
 
 ## Steps
 
 - [x] Install the **Obsidian Git** plugin in the LLMWIKI container (Community Plugins) and initialize the repo — *done 2026-10-28, initialized from the host (`git init -b main` as the container user), no UI dialog needed*
 - [x] Add the `.gitignore` above, then make the first commit, `manual: initial import`
-- [x] Plugin settings: auto-commit every **10 min** when there are changes, message `auto: {{date}} ({{numFiles}} files)` — *auto-**push** is deliberately off (`differentIntervalCommitAndPush: true`, `autoPushInterval: 0`) until a remote exists, otherwise the plugin errors every 10 min*
-- [ ] Remote: a **private GitHub repo** under `Wizard815` (simplest, and it's off-site). Add it with `git remote add origin https://github.com/Wizard815/<repo>.git` in the container (or the plugin's "Edit remotes"). The token goes in the container's credential store (`credential.helper store` is already configured for user `abc`, writes to `/config/.git-credentials`) — **never in the remote URL**, which would land the token in `.git/config`.
-- [ ] After the remote works: turn auto-push on — in `obsidian-git/data.json` set `differentIntervalCommitAndPush: false` (10-min commit-and-sync) and restart the plugin
+- [x] Plugin settings: auto-commit every **10 min** when there are changes, message `auto: {{date}} ({{numFiles}} files)` — *fixed 2026-11-18: `autoSaveInterval` had silently been `0` (auto-commit actually off) since at least 2026-11-14, contradicting this note and rule 5. Now `autoSaveInterval: 10`, `differentIntervalCommitAndPush: false`.*
+- [x] Remote: `github.com/Wizard815/LLM-will-remember-this`, added 2026-11-18. **Public, not private** — the user chose to keep it public rather than switch; see rule 15 for what that requires (placeholders for LAN IPs, `people/` never tracked). History was squashed once on 2026-11-18 to remove personal content and real IPs that had leaked into early commits before that rule existed.
+- [x] Auto-push on — `differentIntervalCommitAndPush: false`, `autoSaveInterval: 10` (10-min commit-and-sync), confirmed 2026-11-18
 - [x] Agents: keep the commit messages from [[agents]] (`ingest:`, `maintain:`, `lint:`…) for their own batches — host/CLI agents write their own; MCP agents running `obsidian-git:commit` get the auto template
 - [x] When auto-commits are running, change rule 5 in [[agents]] from "aspirational" to live
 
