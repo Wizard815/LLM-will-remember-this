@@ -1,6 +1,5 @@
 {
   "shouldConfirmBeforeCreate": true,
-  "autorun": true,
   "folder": "people/wizard/daily",
   "template": "schema/templates/DAILY",
   "format": "YYYY-MM-DD"
