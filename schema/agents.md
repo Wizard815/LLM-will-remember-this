@@ -123,7 +123,7 @@ The registry only says which family member those are: their name (matched automa
 Its loop, every turn:
 1. **Who is speaking?** From the frontend's sign-in, or Omi's speaker name → `who_is`. Unknown → ask "Who's this?" before doing anything personal.
 2. **Load them:** `context_for` that person whenever the speaker changes. Answer from their context, never from the previous person's.
-3. **Remember:** `memory_log` with `person` for what was done or decided; `conversation_log` for the conversation itself (each line with `person`, or `speaker` / `is_user` / `person_id` from Omi), which files a copy in each identified speaker's folder and lists unknown speakers back.
+3. **Remember:** `memory_log` with `person` for what was done or decided; `conversation_log` for the conversation itself (each line with `person`, or `speaker` / `is_user` / `person_id` from Omi; optionally its `overview` and `action_items`, filed above the transcript, or only those with `people` naming who took part), which files a copy in each identified speaker's folder and lists unknown speakers back.
 4. A general agent (Hermes, a coding agent) uses its own person's or a service key and the same tools; nothing is family-specific about connecting.
 
 System prompt for a family home agent (copy and adapt):

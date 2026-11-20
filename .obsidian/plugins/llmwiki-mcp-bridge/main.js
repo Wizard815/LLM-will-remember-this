@@ -36,6 +36,8 @@ const HANDSHAKE_VERSIONS = ["2025-11-25", "2025-06-18", "2025-03-26"];
 const MAX_QUERY_CHARS = 60000;
 const MAX_BODY_BYTES = 8 * 1024 * 1024;
 const MAX_SEGMENTS = 5000;
+const MAX_OVERVIEW = 20000;
+const MAX_ACTION_ITEMS = 200;
 const MAX_CONTEXT_CHARS = 8000;
 
 const DAILY_SECTIONS = {
@@ -280,6 +282,19 @@ function speakerOf(seg, registry, owner) {
 }
 
 /** A transcript as markdown: one paragraph per turn, consecutive lines of one speaker merged. */
+/** A conversation's overview and action items (Omi's structured part), as Markdown sections; "" when neither. */
+function renderStructured(overview, items) {
+  const out = [];
+  const o = String(overview || "").trim();
+  if (o) out.push(`## Overview\n\n${o}`);
+  const lines = (Array.isArray(items) ? items : []).map((x) => {
+    const text = String((x && typeof x === "object" ? x.description : x) || "").replace(/\s+/g, " ").trim();
+    return text ? `- [${x && typeof x === "object" && x.completed ? "x" : " "}] ${text}` : null;
+  }).filter(Boolean);
+  if (lines.length) out.push(`## Action items\n\n${lines.join("\n")}`);
+  return out.join("\n\n");
+}
+
 function renderTranscript(turns) {
   const out = [];
   for (const t of turns) {
@@ -818,7 +833,10 @@ class LlmwikiMcpBridge extends Plugin {
           wearer: S("Whose Omi or microphone recorded it (for is_user lines), when you aren't that person"),
           source: S("Where it came from, e.g. 'omi' or 'kitchen-speaker'"),
           id: S("The recorder's id for this conversation: filing the same id twice does nothing"),
-        }, required: ["segments"] },
+          overview: S("A summary of the conversation (Omi's overview), filed above the transcript"),
+          action_items: { type: "array", description: "Follow-ups from it: strings, or { description, completed? } as Omi sends them", items: {} },
+          people: { type: "array", description: "Family members who took part, by name: who it is filed for when there are no segments", items: { type: "string" } },
+        } },
         run: (a, p) => this.conversationLog(a, p).then((r) => this.relabel(r.text, p)) },
       { name: "notes_list", annotations: READ, description: "List a folder. '' is your view of the vault: your own folders, household/ and schema/ (the admin also sees people/).",
         inputSchema: { type: "object", properties: { path: S("Folder, e.g. 'wiki/1-projects' or 'household/wiki/3-resources'") } },
@@ -920,7 +938,13 @@ class LlmwikiMcpBridge extends Plugin {
   async conversationLog(a, p, { wearer } = {}) {
     const reg = this.registry();
     const segs = Array.isArray(a.segments) ? a.segments : [];
-    if (!segs.length) throw new Error("segments is empty: nothing to file.");
+    if (a.overview != null && typeof a.overview !== "string") throw new Error("overview must be a string.");
+    if (String(a.overview || "").length > MAX_OVERVIEW) throw new Error(`overview: at most ${MAX_OVERVIEW} characters.`);
+    if (a.action_items != null && !Array.isArray(a.action_items)) throw new Error("action_items must be a list.");
+    if ((a.action_items || []).length > MAX_ACTION_ITEMS) throw new Error(`At most ${MAX_ACTION_ITEMS} action items.`);
+    if (a.people != null && !Array.isArray(a.people)) throw new Error("people must be a list of names.");
+    const structured = renderStructured(a.overview, a.action_items);
+    if (!segs.length && !structured) throw new Error("segments is empty: nothing to file.");
     if (segs.length > MAX_SEGMENTS) throw new Error(`At most ${MAX_SEGMENTS} segments per conversation.`);
     if (segs.some((x) => !x || typeof x !== "object" || typeof x.text !== "string")) throw new Error("Each segment needs text (a string).");
     let owner = wearer || null;
@@ -936,6 +960,12 @@ class LlmwikiMcpBridge extends Plugin {
       if (t.member) speakers.set(t.member.id, t.member);
       else if (String(t.text).trim()) unknown.add(t.label);
     }
+    for (const name of a.people || []) {
+      const r = resolveMember(reg, String(name));
+      if (r.error) throw new Error(`people: ${r.error}`);
+      speakers.set(r.member.id, r.member);
+    }
+    if (!segs.length && !speakers.size && owner) speakers.set(owner.id, owner);
     let roots;
     if (p.kind === "member" && p.role !== "admin") roots = [`people/${p.id}`];
     else if (p.kind === "service") roots = ["household"];
@@ -945,7 +975,8 @@ class LlmwikiMcpBridge extends Plugin {
     if (!roots.length) {
       throw new Error(`Nobody in this conversation is a known family member (${[...unknown].join(", ") || "no speakers named"}). Ask who was speaking and send it again with person on each line, or pass shared: true if it was a household conversation.`);
     }
-    const body = renderTranscript(turns);
+    const transcript = renderTranscript(turns);
+    const body = structured ? [structured, transcript ? `## Transcript\n\n${transcript}` : ""].filter(Boolean).join("\n\n") : transcript;
     this.checkText(body);
     const day = a.date || ymd(new Date());
     const title = safeTitle(`Conversation - ${a.title || "untitled"}${a.id ? ` (${String(a.id).replace(/[^A-Za-z0-9-]/g, "").slice(0, 8)})` : ""}`);
@@ -1217,6 +1248,8 @@ class LlmwikiMcpBridge extends Plugin {
       if (body.discarded || !body.transcript_segments.length) return res.json({ filed: 0, skipped: "Omi discarded this conversation or it has no words." });
       args = {
         title: (body.structured && body.structured.title) || "Omi conversation",
+        overview: body.structured && typeof body.structured.overview === "string" ? body.structured.overview : undefined,
+        action_items: body.structured && Array.isArray(body.structured.action_items) ? body.structured.action_items : undefined,
         date: /^\d{4}-\d{2}-\d{2}/.test(String(body.started_at || body.created_at || "")) ? String(body.started_at || body.created_at).slice(0, 10) : undefined,
         id: body.id ? String(body.id) : undefined,
         source: "omi",
@@ -1287,6 +1320,6 @@ module.exports = LlmwikiMcpBridge;
 module.exports.helpers = {
   normPath, safeTitle, findSecret, fillTemplate, insertUnderHeading, guardRaw, capQueryResult, ymd, rolloverText,
   dailyStatus, decodeJsonContent, sectionText, isRaw, normalizeRegistry, whoIs, principalFor, homeOf, resolvePath,
-  membersMatching, resolveMember, isGenericSpeaker, speakerOf, renderTranscript,
+  membersMatching, resolveMember, isGenericSpeaker, speakerOf, renderTranscript, renderStructured,
   toVirtual, guardFamilyWrite, filterQueryYaml, checkArgs,
 };
