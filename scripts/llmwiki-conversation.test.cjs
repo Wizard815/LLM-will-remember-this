@@ -137,3 +137,43 @@ test("Omi's webhook: the key in the URL, the uid checked, the payload filed", as
   await plugin.serveFamilyRest(null, Object.assign(fakeReq("/family/vault/%E0%A4%A", ""), { method: "GET" }), badUrl);
   assert.equal(badUrl.code, 400);
 });
+
+test("an overview and action items are filed above the transcript", async () => {
+  const { call, vault } = setup();
+  const r = await call("t-sam", "conversation_log", { title: "Quilt plan", id: "q-1", overview: "Picked cream for the border.",
+    action_items: ["Buy cream fabric", { description: "Wash the backing", completed: true }, { description: "  " }],
+    segments: [{ person: "Sam", text: "Cream it is." }] });
+  assert.ok(!r.error, r.text);
+  const text = vault.store.get(sources(vault, "people/sam")[0]);
+  assert.match(text, /## Overview\n\nPicked cream for the border\.\n\n## Action items\n\n- \[ \] Buy cream fabric\n- \[x\] Wash the backing\n\n## Transcript\n\n\*\*Sam:\*\* Cream it is\./);
+});
+
+test("without a transcript, the summary is filed for the people named", async () => {
+  const { call, vault } = setup();
+  const r = await call("t-house", "conversation_log", { title: "Shelves", overview: "Garage shelves: three boards.", people: ["Wiz"] });
+  assert.ok(!r.error, r.text);
+  const text = vault.store.get(sources(vault, "people/wizard")[0]);
+  assert.match(text, /## Overview\n\nGarage shelves: three boards\./);
+  assert.ok(!/## Transcript/.test(text));
+  const mine = await call("t-sam", "conversation_log", { overview: "Just mine." });
+  assert.ok(!mine.error, mine.text);
+  assert.equal(sources(vault, "people/sam").length, 1);
+  const nobody = await call("t-house", "conversation_log", { overview: "Who?" });
+  assert.ok(nobody.error); assert.match(nobody.text, /Nobody in this conversation is a known family member/);
+  const empty = await call("t-sam", "conversation_log", { overview: "  ", action_items: [] });
+  assert.ok(empty.error); assert.match(empty.text, /nothing to file/);
+  const badPerson = await call("t-house", "conversation_log", { overview: "x", people: ["Speaker 1"] });
+  assert.ok(badPerson.error); assert.match(badPerson.text, /people: "Speaker 1" is a per-conversation speaker label/);
+  const badType = await call("t-sam", "conversation_log", { overview: 5 });
+  assert.ok(badType.error); assert.match(badType.text, /"overview" must be a string/);
+});
+
+test("Omi's webhook files its overview and action items", async () => {
+  const { plugin, vault } = setup();
+  const res = fakeRes();
+  const body = { ...omiPayload, structured: { title: "Quilt colors", overview: "Border is cream.", action_items: [{ description: "Order fabric", completed: false }] } };
+  await plugin.serveFamilyRest(null, fakeReq("/family/conversation?key=t-sam&uid=omi-uid-sam", body), res);
+  assert.equal(res.code, 200, JSON.stringify(res.body));
+  const text = vault.store.get(sources(vault, "people/sam")[0]);
+  assert.match(text, /## Overview\n\nBorder is cream\.\n\n## Action items\n\n- \[ \] Order fabric\n\n## Transcript\n\n\*\*Sam:\*\* Sage/);
+});
