@@ -224,7 +224,7 @@ function normalizeRegistry(fm) {
   for (const m of Array.isArray(f.members) ? f.members : []) {
     const id = String((m && m.id) || "");
     if (!ID_RE.test(id)) continue;
-    members.set(id, { id, name: String(m.name || id), role: m.role === "admin" ? "admin" : "member",
+    members.set(id, { id, name: String(m.name || id), role: m.role === "admin" ? "admin" : m.role === "child" ? "child" : "member",
       aliases: list(m.aliases), voice: list(m.voice).filter((v) => !isGenericSpeaker(v)),
       // Omi: the account this person wears (segments with is_user are theirs), and the
       // ids other family members' Omi apps gave this person under People.
@@ -236,7 +236,8 @@ function normalizeRegistry(fm) {
   }
   for (const s of Array.isArray(f.shared_agents) ? f.shared_agents : []) {
     const id = String((s && s.id) || "");
-    if (ID_RE.test(id)) shared.set(id, { id, name: String(s.name || id) });
+    // audience "parents": the grown-ups' chat; it may read household/parents/ too.
+    if (ID_RE.test(id)) shared.set(id, { id, name: String(s.name || id), audience: s.audience === "parents" ? "parents" : "family" });
   }
   return { members, services, shared };
 }
@@ -323,9 +324,19 @@ function principalFor(record, registry) {
   }
   if (record.kind === "shared") {
     const s = registry.shared.get(record.id);
-    return s ? { kind: "shared", id: s.id, name: s.name, role: "shared", label: record.label || s.name } : null;
+    return s ? { kind: "shared", id: s.id, name: s.name, role: "shared", audience: s.audience, label: record.label || s.name } : null;
   }
+  // The master key: reads every person's notes and the household's, writes nothing, and is nobody.
+  // For your own tools and backups, never for an assistant that answers people.
+  if (record.kind === "master") return { kind: "master", id: "master", name: "Master key", role: "admin", label: record.label || "master" };
   return null;
+}
+
+/** household/parents/: the grown-ups' shared notes (gift ideas for the children, school letters...). */
+const PARENTS_DIR = "household/parents";
+const grownUpsOnly = (real) => real === PARENTS_DIR || String(real).startsWith(`${PARENTS_DIR}/`);
+function mayReadParents(p) {
+  return (p.kind === "member" && p.role !== "child") || (p.kind === "shared" && p.audience === "parents") || p.kind === "master";
 }
 
 /** The folder a principal's own short-term memory lives in. */
@@ -342,6 +353,12 @@ function homeOf(p) {
  * a shared agent sees household/ and schema/ only, and may not write notes.
  */
 function resolvePath(vpath, p) {
+  const r = resolvePathFor(vpath, p);
+  if (r.real !== undefined && grownUpsOnly(r.real) && !mayReadParents(p)) return { error: `${PARENTS_DIR}/ is for the grown-ups.` };
+  if (r.real !== undefined && p.kind === "master") return { ...r, write: false };   // the master key only reads
+  return r;
+}
+function resolvePathFor(vpath, p) {
   const v = normPath(vpath).replace(/\/$/, "");
   const segs = v ? v.split("/") : [];
   if (/[\x00-\x1f]/.test(v) || segs.some((s) => s === ".." || s === "." || s.startsWith("."))) return { error: "That isn't a vault path." };
@@ -353,6 +370,7 @@ function resolvePath(vpath, p) {
     return { error: `${v} belongs to another family member: only they and the admin can open it.` };
   }
   const home = homeOf(p);
+  if (!home && p.kind === "master") return { error: "The master key has no folder of its own: use people/<id>/..., household/... or schema/..." };
   if (!home) return { error: `A shared agent has no folder of its own: use household/... or name the person in the memory tools.` };
   return { real: `${home}/${v}`, write: true };
 }
@@ -360,6 +378,7 @@ function resolvePath(vpath, p) {
 /** A real vault path as the principal sees it, or null when they may not see it. */
 function toVirtual(real, p) {
   const r = normPath(real);
+  if (grownUpsOnly(r) && !mayReadParents(p)) return null;
   const home = homeOf(p);
   if (home && p.kind === "member" && r.startsWith(`${home}/`)) return r.slice(home.length + 1);
   if (p.kind === "service" && r.startsWith("household/")) return r.slice("household/".length);
@@ -865,10 +884,15 @@ class LlmwikiMcpBridge extends Plugin {
 
   whoamiText(p) {
     const reg = this.registry();
-    const lines = [`You are acting for: ${p.name} (${p.kind === "member" ? p.role : p.kind}, id ${p.id}).`];
-    if (p.kind === "member") {
+    // The first line is read by clients (FAITH) to check a token is the one they think: keep its shape.
+    const kind = p.kind === "member" ? p.role : p.kind === "shared" && p.audience === "parents" ? "shared-parents" : p.kind;
+    const lines = [`You are acting for: ${p.name} (${kind}, id ${p.id}).`];
+    if (p.kind === "master") {
+      lines.push("This is the master key: it reads people/<id>/ for every member, household/ and schema/, and writes nothing. Never answer one person with another's notes.");
+    } else if (p.kind === "member") {
       lines.push("Your view of the vault: your own daily/, inbox/, raw/sources/ and wiki/ (PARA) at the root; household/ (shared with the family); schema/ (rules and templates, read only).");
       if (p.role === "admin") lines.push("As admin you also see people/<id>/ for every member. Don't bring one person's private notes into another's conversation.");
+      if (p.role === "child") lines.push("household/parents/ is for the grown-ups and isn't in your view.");
       lines.push("Notes at the root are about you; household/ is shared; anything about another person is theirs.");
     } else if (p.kind === "service") {
       lines.push("You write to the household's memory: daily/, inbox/ and raw/sources/ here are household/'s.");
@@ -1108,6 +1132,9 @@ class LlmwikiMcpBridge extends Plugin {
         const args = (msg.params && msg.params.arguments) || {};
         const bad = checkArgs(tool.inputSchema, args);
         if (bad) return ok({ content: [{ type: "text", text: `${name}: ${bad}. Nothing was done.` }], isError: true });
+        if (p.kind === "master" && tool.annotations && tool.annotations.readOnlyHint === false) {
+          return ok({ content: [{ type: "text", text: `${name}: the master key only reads. Use a person's or the household's token to write.` }], isError: true });
+        }
         try {
           const text = await tool.run(args, p);
           return ok({ content: [{ type: "text", text: String(text) }] });

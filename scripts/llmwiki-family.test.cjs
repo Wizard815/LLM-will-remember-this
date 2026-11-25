@@ -161,8 +161,44 @@ test("an admin's token issued as member sees only their own notes (for FAITH)", 
   const read = await call("t-wizard-faith", "note_read", { path: "people/sam/wiki/1-projects/Wedding Quilt.md" });
   assert.ok(read.error, "Sam's private note stays private from the admin's assistant");
   assert.doesNotMatch((await call("t-wizard-faith", "notes_search", { query: "quilt" })).text, /Wedding Quilt/);
-  assert.match((await call("t-wizard-faith", "notes_search", { query: "MD1200" })).text, /MD1200/, "his own notes still");
+  assert.match((await call("t-wizard-faith", "notes_search", { query: "divider" })).text, /MD1200 Cage Divider\.md/, "his own notes still");
   assert.ok(!JSON.parse((await call("t-wizard-faith", "notes_list", { path: "" })).text).files.includes("people/"));
   assert.match((await call("t-wizard-faith", "memory_log", { text: "Booked the ferry" })).text || "", /daily/i, "and he can still log to his own memory");
   assert.match((await call("t-wizard", "note_read", { path: "people/sam/wiki/1-projects/Wedding Quilt.md" })).text, /quilt/, "his admin token is unchanged");
+});
+
+// Grown-ups only, and the master key: the bridge keeps these apart itself, whatever the client does.
+const KIDS = {
+  ...FAMILY,
+  members: [...FAMILY.members, { id: "robin", name: "Robin", role: "child" }],
+  shared_agents: [...FAMILY.shared_agents, { id: "faith-parents", name: "FAITH (parents)", audience: "parents" }],
+};
+const GIFTS = { "household/parents/Robin's birthday.md": "A red bike from the shop on Elm Street. Don't tell Robin.\n" };
+
+test("household/parents/ is for the grown-ups: a child, a service and the family's shared agent never see it", async () => {
+  const { call } = setup(GIFTS, KIDS);
+  for (const t of ["t-robin", "t-um", "t-house"]) {
+    assert.ok((await call(t, "note_read", { path: "household/parents/Robin's birthday.md" })).error, `${t} can't read it`);
+    assert.doesNotMatch((await call(t, "notes_search", { query: "bike" })).text || "", /birthday/, `${t} can't find it`);
+  }
+  assert.ok((await call("t-robin", "note_write", { path: "household/parents/x.md", content: "hi" })).error, "nor write there");
+  assert.match((await call("t-robin", "whoami")).text, /\(child, id robin\)/);
+  for (const t of ["t-sam", "t-wizard-faith", "t-parents"]) {
+    assert.match((await call(t, "note_read", { path: "household/parents/Robin's birthday.md" })).text, /red bike/, `${t} can`);
+  }
+  assert.match((await call("t-parents", "whoami")).text, /\(shared-parents, id faith-parents\)/);
+  assert.match((await call("t-robin", "note_read", { path: "household/wiki/3-resources/RaidLab.md" })).text, /MI50/, "the rest of household/ is still the family's");
+});
+
+test("the master key reads everyone's notes and writes nothing", async () => {
+  const { call } = setup(GIFTS, KIDS);
+  assert.match((await call("t-master", "whoami")).text, /\(master, id master\)/);
+  assert.match((await call("t-master", "note_read", { path: "people/sam/wiki/1-projects/Wedding Quilt.md" })).text, /quilt/);
+  assert.match((await call("t-master", "note_read", { path: "household/parents/Robin's birthday.md" })).text, /red bike/);
+  assert.match((await call("t-master", "notes_search", { query: "divider" })).text, /people\/wizard\/wiki\/1-projects\/MD1200 Cage Divider\.md/);
+  const w = await call("t-master", "note_write", { path: "household/wiki/x.md", content: "hi" });
+  assert.ok(w.error, "no writing");
+  assert.match(w.text || w.error || "", /only reads/);
+  assert.match((await call("t-master", "memory_log", { text: "x", person: "sam" })).text || "", /only reads/);
+  assert.ok((await call("t-master", "note_read", { path: "daily/x.md" })).error, "it has no folder of its own");
 });

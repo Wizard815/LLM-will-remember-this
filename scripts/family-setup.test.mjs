@@ -117,6 +117,20 @@ test("token --as member: the admin's token for an assistant that sees only their
   await assert.rejects(cli(v, "token", "wizard", "--as", "admin"), /--as member is the only choice/);
 });
 
+test("a child, the grown-ups' shared agent and the master key", async () => {
+  const v = legacyVault();
+  await cli(v, "init", "--name", "Wizard", "--id", "wizard");
+  await cli(v, "add-member", "--name", "Robin", "--role", "child");
+  await assert.rejects(cli(v, "add-member", "--name", "Kim", "--role", "boss"), /admin, member or child/);
+  await cli(v, "add-shared", "faith-parents", "FAITH", "(parents)", "--audience", "parents");
+  await assert.rejects(cli(v, "add-service", "um", "UM", "--audience", "parents"), /only for a shared agent/);
+  const fam = readFamily(v);
+  assert.equal(fam.members.find((m) => m.id === "robin").role, "child");
+  assert.equal(fam.shared_agents.find((s) => s.id === "faith-parents").audience, "parents");
+  assert.equal((await cli(v, "token", "master", "--label", "backups")).token.startsWith("llmw_"), true);
+  assert.equal(readTokens(v).find((t) => t.label === "backups").kind, "master");
+});
+
 test("the bridge's token file is ignored by git", () => {
   const out = execFileSync("git", ["check-ignore", ".obsidian/plugins/llmwiki-mcp-bridge/data.json"], { cwd: REPO, encoding: "utf8" });
   assert.match(out, /llmwiki-mcp-bridge\/data.json/);

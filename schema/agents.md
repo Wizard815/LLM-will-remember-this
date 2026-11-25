@@ -368,6 +368,23 @@ Preferred write path for any agent outside the container. Registered in the Herm
 | `/family/search/simple/` | exact-word search, only over what the token may read |
 | `POST /family/conversation` | a conversation in, as `conversation_log` takes it or as Omi's Conversation Events webhook sends it (`?key=` accepted on this route only; Omi's `?uid=` must match the person's `omi_uid` when set) |
 
+**Which key, for what.** The bridge enforces all of this itself, whatever the client does:
+
+| Key | Made with | Reads | Writes |
+|---|---|---|---|
+| A member's token | `token <id>` | their own folder, `household/` (with `household/parents/` for grown-ups), `schema/` | their own memory, `household/` |
+| A child's token | `add-member --role child`, then `token <id>` | the same, but never `household/parents/` | the same, never `household/parents/` |
+| The admin's token for an assistant | `token <admin> --label faith --as member` | like any member: only their own folder | their own memory |
+| The family's shared agent (FAITH's household view) | `add-shared faith FAITH`, then `token faith` | `household/` (not `parents/`) and what each member shares | memory, naming the person |
+| The grown-ups' shared agent (FAITH's parents' chat) | `add-shared faith-parents "FAITH parents" --audience parents`, then `token faith-parents` | the same plus `household/parents/` | memory, naming the person |
+| A service (Upstream Manager) | `add-service <id> <name>`, then `token <id>` | `household/` (not `parents/`) | `household/` |
+| **The master key** | `token master --label <what for>` | every person's folder, `household/` (all of it), `schema/` | nothing |
+| The plugin's own key (whole vault) | Obsidian's Local REST API settings | everything | everything |
+
+- `household/parents/` holds the grown-ups' shared notes: gift ideas for the children, school letters. Children, services and the family's shared agent can't read, search or write it.
+- The master key is for your own tools: backups, a wiki dashboard, an export. **Never give it to an assistant that answers people**: it would see everyone's notes. It has no folder of its own and writes nothing.
+- `whoami`'s first line says who a token is, e.g. `You are acting for: Sam (member, id sam).`, `(child, id robin)`, `(shared, id faith)`, `(shared-parents, id faith-parents)`, `(master, id master)`. FAITH reads it to check each token is the one it should be.
+
 Family MCP tools: `whoami` (call first), `family_members`, `who_is`, `context_for` (one person's context, on every change of speaker), `conversation_log` (a conversation, filed per speaker), `memory_log`, `memory_capture`, `memory_add_source`, `memory_rollover`, `notes_list`, `note_read`, `notes_search`, `query_wiki`, `note_write`. The `memory_*` tools take `person` (an id or `household`): a shared agent must always pass it, a member may name only themselves or `household`, the admin anyone. Raw sources can only be created, and their `status` changed; `schema/` is read-only.
 
 **MCP tools for the admin (`/mcp`, master key):**

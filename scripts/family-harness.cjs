@@ -67,6 +67,9 @@ function setup(extra = {}, family = FAMILY) {
     { hash: hash("t-um"), kind: "service", id: "upstream-manager" },
     { hash: hash("t-house"), kind: "shared", id: "house-assistant" },
     { hash: hash("t-gone"), kind: "member", id: "former" },
+    { hash: hash("t-robin"), kind: "member", id: "robin" },
+    { hash: hash("t-parents"), kind: "shared", id: "faith-parents" },
+    { hash: hash("t-master"), kind: "master", id: "master", label: "backups" },
   ];
   const app = {
     vault, plugins: { plugins: {} },

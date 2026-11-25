@@ -7,15 +7,18 @@
 //   node scripts/family-setup.mjs add-member              asks who to add; creates people/<id>/
 //   node scripts/family-setup.mjs add-service <id> <name> e.g. upstream-manager: writes household/
 //   node scripts/family-setup.mjs add-shared <id> <name>  one assistant for the whole family
+//                                  [--audience parents]   one for the grown-ups' chat (reads household/parents/ too)
 //   node scripts/family-setup.mjs token <id>              prints a new token once; only its hash is kept
 //                                  [--as member]          for the admin: a token that sees only their own notes
 //                                                          (for an assistant like FAITH that also serves shared screens)
+//   node scripts/family-setup.mjs token master            a read-only key to everyone's notes (your own tools, backups);
+//                                                          never give it to an assistant that answers people
 //   node scripts/family-setup.mjs update <id> [flags]     add names or Omi ids to someone
 //   node scripts/family-setup.mjs revoke <id>             removes every token of <id>
 //   node scripts/family-setup.mjs remove <id>             takes someone out (tokens too); keeps their folder
 //   node scripts/family-setup.mjs list                    who is in the family and who has tokens
 //
-// Flags instead of questions: --id --name --role admin|member --alias X (repeatable), --voice X
+// Flags instead of questions: --id --name --role admin|member|child --alias X (repeatable), --voice X
 // (repeatable: a name Omi's People list uses for them), --omi-uid X (the Omi account they wear),
 // --omi-person X (repeatable: the id another member's Omi gave them under People),
 // --household-areas a,b,c (init), --vault <path> (default: here).
@@ -80,13 +83,14 @@ decide who may read what. Change it with \`node scripts/family-setup.mjs\` (or b
 per line, same shape).
 
 - **members**: each has a private folder \`people/<id>/\` (only they, their agents and the admin can read it).
-  \`role: admin\` sees everyone's. \`aliases\` are other names they go by; \`voice\` are names
+  \`role: admin\` sees everyone's; \`role: child\` doesn't see \`household/parents/\`. \`aliases\` are other names they go by; \`voice\` are names
   Omi's People list uses for them; \`omi_uid\` is the Omi account they wear and \`omi_people\` the
   ids other members' Omi apps gave them. Omi recognizes the voices; this only says who they are.
   ("Speaker 1" labels are per conversation and never name anyone.)
 - **services**: apps that write the household's memory (\`household/\`), e.g. Upstream Manager.
 - **shared_agents**: one assistant for the whole family. It has no folder of its own, must name the
-  person on every write, and asks who it is talking to when it can't tell.
+  person on every write, and asks who it is talking to when it can't tell. \`audience: parents\` is
+  the grown-ups' one: it also reads \`household/parents/\`, the grown-ups' shared notes.
 
 Tokens are never stored here: \`family-setup.mjs token <id>\` prints one once and keeps only its hash.
 `;
@@ -116,7 +120,8 @@ function writeTokens(vault, tokens) {
 
 export function issueToken(vault, id, label = "", as = "") {
   const fam = readFamily(vault);
-  const kind = fam.members.some((m) => m.id === id) ? "member" : fam.services.some((s) => s.id === id) ? "service"
+  // "master": a read-only key to every person's notes and the household's (for your own tools, never an assistant).
+  const kind = id === "master" ? "master" : fam.members.some((m) => m.id === id) ? "member" : fam.services.some((s) => s.id === id) ? "service"
     : fam.shared_agents.some((s) => s.id === id) ? "shared" : null;
   if (!kind) throw new Error(`"${id}" isn't in schema/family.md; add them first.`);
   if (as && (as !== "member" || kind !== "member")) throw new Error(`--as member is the only choice, and only for a family member's token.`);
@@ -421,7 +426,9 @@ async function memberFromInput(args, rl, role) {
   const aliases = args.alias.length || !rl ? args.alias : (await rl.ask("Other names they go by (comma-separated, Enter for none): ")).split(",").map((s) => s.trim()).filter(Boolean);
   const voice = args.voice.length || !rl ? args.voice : (await rl.ask("Names Omi's People list uses for them (comma-separated, Enter for none): ")).split(",").map((s) => s.trim()).filter(Boolean);
   const omi_uid = args.omi_uid || !rl ? args.omi_uid || "" : (await rl.ask("Their Omi account uid, if they wear an Omi (Enter for none): ")).trim();
-  return memberRecord({ id, name, role: args.role || role, aliases, voice, omi_uid, omi_people: args.omi_person });
+  const r = args.role || role;
+  if (!["admin", "member", "child"].includes(r)) throw new Error(`--role is admin, member or child, not "${r}".`);
+  return memberRecord({ id, name, role: r, aliases, voice, omi_uid, omi_people: args.omi_person });
 }
 
 export async function run(argv, { interactive = process.stdin.isTTY } = {}) {
@@ -472,7 +479,8 @@ export async function run(argv, { interactive = process.stdin.isTTY } = {}) {
         if (!ID_RE.test(id || "")) throw new Error("give an id, e.g. upstream-manager");
         const key = cmd === "add-service" ? "services" : "shared_agents";
         if (fam[key].some((x) => x.id === id)) throw new Error(`${id} is already there`);
-        fam[key].push({ id, name: name.join(" ") || id });
+        if (args.audience && (cmd !== "add-shared" || args.audience !== "parents")) throw new Error("--audience parents is only for a shared agent (the grown-ups' chat).");
+        fam[key].push({ id, name: name.join(" ") || id, ...(args.audience ? { audience: "parents" } : {}) });
         writeFamily(vault, fam);
         log(`Added ${cmd === "add-service" ? "service" : "shared agent"} ${id}. Issue a token with: token ${id}`);
         return { id };
