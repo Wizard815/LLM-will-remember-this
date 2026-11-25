@@ -107,6 +107,16 @@ test("add-member, services, shared agents and tokens", async () => {
   assert.deepEqual(readTokens(v).map((t) => t.id), ["upstream-manager"]);
 });
 
+test("token --as member: the admin's token for an assistant that sees only their own notes", async () => {
+  const v = legacyVault();
+  await cli(v, "init", "--name", "Wizard", "--id", "wizard");
+  await cli(v, "add-service", "upstream-manager", "Upstream", "Manager");
+  await cli(v, "token", "wizard", "--label", "faith", "--as", "member");
+  assert.equal(readTokens(v).find((t) => t.label === "faith").as, "member");
+  await assert.rejects(cli(v, "token", "upstream-manager", "--as", "member"), /only for a family member/);
+  await assert.rejects(cli(v, "token", "wizard", "--as", "admin"), /--as member is the only choice/);
+});
+
 test("the bridge's token file is ignored by git", () => {
   const out = execFileSync("git", ["check-ignore", ".obsidian/plugins/llmwiki-mcp-bridge/data.json"], { cwd: REPO, encoding: "utf8" });
   assert.match(out, /llmwiki-mcp-bridge\/data.json/);

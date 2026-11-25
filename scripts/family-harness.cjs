@@ -62,6 +62,7 @@ function setup(extra = {}, family = FAMILY) {
   });
   const tokens = [
     { hash: hash("t-wizard"), kind: "member", id: "wizard" },
+    { hash: hash("t-wizard-faith"), kind: "member", id: "wizard", as: "member", label: "faith" },
     { hash: hash("t-sam"), kind: "member", id: "sam" },
     { hash: hash("t-um"), kind: "service", id: "upstream-manager" },
     { hash: hash("t-house"), kind: "shared", id: "house-assistant" },

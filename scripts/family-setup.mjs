@@ -8,6 +8,8 @@
 //   node scripts/family-setup.mjs add-service <id> <name> e.g. upstream-manager: writes household/
 //   node scripts/family-setup.mjs add-shared <id> <name>  one assistant for the whole family
 //   node scripts/family-setup.mjs token <id>              prints a new token once; only its hash is kept
+//                                  [--as member]          for the admin: a token that sees only their own notes
+//                                                          (for an assistant like FAITH that also serves shared screens)
 //   node scripts/family-setup.mjs update <id> [flags]     add names or Omi ids to someone
 //   node scripts/family-setup.mjs revoke <id>             removes every token of <id>
 //   node scripts/family-setup.mjs remove <id>             takes someone out (tokens too); keeps their folder
@@ -112,14 +114,15 @@ function writeTokens(vault, tokens) {
   writeFileSync(tokenFile(vault), JSON.stringify({ ...data, tokens }, null, 2) + "\n");
 }
 
-export function issueToken(vault, id, label = "") {
+export function issueToken(vault, id, label = "", as = "") {
   const fam = readFamily(vault);
   const kind = fam.members.some((m) => m.id === id) ? "member" : fam.services.some((s) => s.id === id) ? "service"
     : fam.shared_agents.some((s) => s.id === id) ? "shared" : null;
   if (!kind) throw new Error(`"${id}" isn't in schema/family.md; add them first.`);
+  if (as && (as !== "member" || kind !== "member")) throw new Error(`--as member is the only choice, and only for a family member's token.`);
   const token = `llmw_${randomBytes(24).toString("base64url")}`;
   const hash = createHash("sha256").update(token).digest("hex");
-  writeTokens(vault, [...readTokens(vault), { hash, kind, id, label: label || id, created: new Date().toISOString().slice(0, 10) }]);
+  writeTokens(vault, [...readTokens(vault), { hash, kind, id, label: label || id, created: new Date().toISOString().slice(0, 10), ...(as ? { as } : {}) }]);
   return { token, kind };
 }
 
@@ -475,7 +478,7 @@ export async function run(argv, { interactive = process.stdin.isTTY } = {}) {
         return { id };
       }
       case "token": {
-        const { token, kind } = issueToken(vault, rest[0], args.label);
+        const { token, kind } = issueToken(vault, rest[0], args.label, args.as);
         log(`Token for ${rest[0]} (${kind}). It is shown only now; store it in that app's settings:\n\n  ${token}\n`);
         return { token };
       }

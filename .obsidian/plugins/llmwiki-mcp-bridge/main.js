@@ -313,7 +313,9 @@ function principalFor(record, registry) {
   if (!record) return null;
   if (record.kind === "member") {
     const m = registry.members.get(record.id);
-    return m ? { kind: "member", id: m.id, name: m.name, role: m.role, label: record.label || m.name } : null;
+    // A token issued "as member" never gets the admin's view of everyone (an assistant like FAITH,
+    // which also answers on shared screens, should see only this person's own notes).
+    return m ? { kind: "member", id: m.id, name: m.name, role: record.as === "member" ? "member" : m.role, label: record.label || m.name } : null;
   }
   if (record.kind === "service") {
     const s = registry.services.get(record.id);

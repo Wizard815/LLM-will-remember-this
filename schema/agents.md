@@ -101,6 +101,8 @@ The registry is [[family|schema/family.md]] (front matter: `members`, `services`
 node scripts/family-setup.mjs add-member --name Sam --alias Samantha --voice "Sammy"
 node scripts/family-setup.mjs token sam        # printed once; only the hash is kept
 ```
+**The admin's token for a home assistant (FAITH):** `token wizard --label faith --as member`. An admin token sees everyone's notes, so a search in the admin's own chat, or on a shared screen they signed into, could turn up someone else's private note. A token issued `--as member` sees only the admin's own folder, household/ and schema/, like anyone else's. Keep the full admin token for maintenance.
+
 `add-member` asks who when run without flags, and refuses a name, alias or Omi id another member already has. Services: `add-service <id> <name>`; a family-wide assistant: `add-shared <id> <name>`; `update <id> --alias X --voice X --omi-uid X --omi-person X` adds to someone; `revoke <id>` removes their tokens; `remove <id>` takes them out of the family (tokens too) and keeps their folder for the admin.
 
 ### Voice and the home agent

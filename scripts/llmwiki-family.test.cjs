@@ -155,3 +155,14 @@ test("the MCP handshake: initialize names who you are; unknown arguments are ref
   assert.match(checkArgs({ properties: { text: { type: "string" } } }, { txt: "x" }), /unknown argument "txt"/);
   assert.equal(guardFamilyWrite("patch", "people/sam/raw/sources/a.md", true, { targetType: "frontmatter", target: "status", operation: "replace" }), null);
 });
+
+test("an admin's token issued as member sees only their own notes (for FAITH)", async () => {
+  const { call } = setup();
+  const read = await call("t-wizard-faith", "note_read", { path: "people/sam/wiki/1-projects/Wedding Quilt.md" });
+  assert.ok(read.error, "Sam's private note stays private from the admin's assistant");
+  assert.doesNotMatch((await call("t-wizard-faith", "notes_search", { query: "quilt" })).text, /Wedding Quilt/);
+  assert.match((await call("t-wizard-faith", "notes_search", { query: "MD1200" })).text, /MD1200/, "his own notes still");
+  assert.ok(!JSON.parse((await call("t-wizard-faith", "notes_list", { path: "" })).text).files.includes("people/"));
+  assert.match((await call("t-wizard-faith", "memory_log", { text: "Booked the ferry" })).text || "", /daily/i, "and he can still log to his own memory");
+  assert.match((await call("t-wizard", "note_read", { path: "people/sam/wiki/1-projects/Wedding Quilt.md" })).text, /quilt/, "his admin token is unchanged");
+});
