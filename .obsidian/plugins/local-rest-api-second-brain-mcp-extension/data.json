@@ -6,7 +6,8 @@
   "wikiPurpose": "",
   "allowedPathPatterns": [
     "^household/wiki/",
-    "^people/[^/]+/wiki/"
+    "^people/[^/]+/wiki/",
+    "^groups/[^/]+/wiki/"
   ],
   "excludedPathPatterns": [
     "^wiki/index\\.md$",

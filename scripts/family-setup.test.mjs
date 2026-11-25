@@ -71,7 +71,7 @@ test("init moves the homelab to household/ and the admin's own notes to people/<
   assert.match(read(v, "people/wizard/wiki/2-areas/Personal.md"), /FROM "people\/wizard\/wiki\/1-projects"/);
   // Plugins point at the new places.
   assert.equal(JSON.parse(read(v, ".obsidian/daily-notes.json")).folder, "people/wizard/daily");
-  assert.deepEqual(JSON.parse(read(v, ".obsidian/plugins/local-rest-api-second-brain-mcp-extension/data.json")).allowedPathPatterns, ["^household/wiki/", "^people/[^/]+/wiki/"]);
+  assert.deepEqual(JSON.parse(read(v, ".obsidian/plugins/local-rest-api-second-brain-mcp-extension/data.json")).allowedPathPatterns, ["^household/wiki/", "^people/[^/]+/wiki/", "^groups/[^/]+/wiki/"]);
   assert.deepEqual(readFamily(v).members, [{ id: "wizard", name: "Wizard", role: "admin", aliases: ["Wiz"], voice: [], omi_uid: "uid-wizard" }]);
   // The household log names a note that is now private: init reports it.
   writeFileSync(join(v, "household/wiki/logs/Log - 2026-11-01.md"), "Filed [[Engagement Ring Shopping]] and [[RaidLab]].\n");
@@ -154,4 +154,39 @@ test("edge: names, Omi labels and ids can't be shared or misused; remove takes t
   assert.deepEqual(readFamily(v).members.map((m) => m.id), ["wizard"]);
   assert.ok(existsSync(join(v, "people/sam/profile.md")), "the folder stays");
   assert.equal(readTokens(v).length, 0);
+});
+
+test("groups: add-group, update-group, remove; names can't clash; query_wiki searches groups/", async () => {
+  const v = legacyVault();
+  await cli(v, "init", "--name", "Wizard", "--id", "wizard");
+  await cli(v, "add-member", "--name", "Sam");
+  await cli(v, "add-member", "--name", "Robin", "--role", "child");
+  await cli(v, "add-shared", "faith-parents", "FAITH", "(parents)", "--audience", "parents");
+  await cli(v, "add-group", "us", "Wizard", "&", "Sam", "--member", "wizard", "--member", "sam", "--alias", "the couple");
+  await cli(v, "add-group", "kids", "The", "kids", "--member", "robin", "--reader", "sam", "--reader", "faith-parents");
+  assert.deepEqual(readFamily(v).groups, [
+    { id: "us", name: "Wizard & Sam", members: ["wizard", "sam"], aliases: ["the couple"] },
+    { id: "kids", name: "The kids", members: ["robin"], readers: ["sam", "faith-parents"] },
+  ]);
+  assert.ok(existsSync(join(v, "groups/us/wiki/1-projects")) && !existsSync(join(v, "groups/us/profile.md")));
+  assert.ok(JSON.parse(read(v, ".obsidian/plugins/local-rest-api-second-brain-mcp-extension/data.json")).allowedPathPatterns.includes("^groups/[^/]+/wiki/"));
+  await assert.rejects(cli(v, "add-group", "sam", "Sam's", "--member", "sam"), /already means someone/);
+  await assert.rejects(cli(v, "add-group", "trip", "Household", "--member", "sam"), /already means someone/);
+  await assert.rejects(cli(v, "add-group", "trip", "Trip"), /at least one member/);
+  await assert.rejects(cli(v, "add-group", "trip", "Trip", "--member", "ghost"), /isn't a family member/);
+  await assert.rejects(cli(v, "add-group", "trip", "Trip", "--member", "sam", "--reader", "sam"), /already a member/);
+  await assert.rejects(cli(v, "add-member", "--name", "Kids"), /name of the group/);
+  await cli(v, "update-group", "kids", "--member", "sam", "--drop", "faith-parents");
+  assert.deepEqual(readFamily(v).groups[1], { id: "kids", name: "The kids", members: ["robin", "sam"] });
+  await cli(v, "remove", "robin");
+  assert.deepEqual(readFamily(v).groups[1].members, ["sam"], "a removed member leaves their groups");
+  await cli(v, "remove", "sam");
+  assert.deepEqual(readFamily(v).groups.map((g) => g.id), ["us"], "a group with nobody left goes");
+  assert.deepEqual(await cli(v, "remove", "us"), { removed: "us", tokens: 0 });
+  assert.ok(existsSync(join(v, "groups/us")), "the folder stays");
+});
+
+test("group folders are ignored by git, like people/ (the repo is public)", () => {
+  const out = execFileSync("git", ["check-ignore", "groups/us/wiki/x.md"], { cwd: REPO, encoding: "utf8" });
+  assert.match(out, /groups\/us/);
 });

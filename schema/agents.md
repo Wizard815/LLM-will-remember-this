@@ -46,6 +46,10 @@ LLMWIKI/
 │       ├── profile.md  # Long-term memory ABOUT the person (type: profile)
 │       ├── inbox/ daily/ raw/sources/
 │       └── wiki/       # Their own PARA: 1-projects/ 2-areas/ 3-resources/ 4-archive/ logs/
+├── groups/             # SHARED BY SOME: a couple, the kids, a trip (see Groups below)
+│   └── <id>/           # e.g. groups/us/ — only its members, its readers and the admin
+│       ├── inbox/ daily/ raw/sources/
+│       └── wiki/       # The group's PARA, same layout (no profile.md)
 ├── schema/             # Layer 3 — rules and templates (read-only to agents)
 │   ├── family.md       # Who is who: members, services, shared agents (see Family)
 │   ├── templates/      # PROJECT, AREA, RESOURCE, LOG, SOURCE, DAILY, PROFILE
@@ -53,7 +57,7 @@ LLMWIKI/
 └── scripts/            # Bridge tests and family-setup.mjs (not notes)
 ```
 
-In this file, `wiki/`, `daily/`, `inbox/` and `raw/` mean **those folders inside a root** (`household/` or `people/<id>/`). Every rule applies the same in each root.
+In this file, `wiki/`, `daily/`, `inbox/` and `raw/` mean **those folders inside a root** (`household/`, `people/<id>/` or `groups/<id>/`). Every rule applies the same in each root.
 
 **No subfolders inside the four PARA folders.** Grouping is done by the `area` field, links, and the dashboard — not by nesting.
 
@@ -74,7 +78,7 @@ Built things change folder over their life: a pipeline is a **project** while be
 
 ## Family
 
-The registry is [[family|schema/family.md]] (front matter: `members`, `services`, `shared_agents`). It is changed only with `node scripts/family-setup.mjs` by the admin — agents read it, never edit it.
+The registry is [[family|schema/family.md]] (front matter: `members`, `services`, `shared_agents`, `groups`). It is changed only with `node scripts/family-setup.mjs` by the admin — agents read it, never edit it.
 
 | Who | Writes to | Can read |
 |---|---|---|
@@ -82,6 +86,27 @@ The registry is [[family|schema/family.md]] (front matter: `members`, `services`
 | The **admin** (a member with `role: admin`) | everywhere except `schema/` | everything |
 | A **service** (Upstream Manager, n8n…) | `household/` | `household/`, `schema/` |
 | A **shared agent** (one assistant for the whole house) | short-term memory (`memory_log`, `memory_capture`, `memory_add_source`) of the person it names, on every write; `household/` | `household/`, `schema/`, each profile's "Shared with the family" section — **never** private notes |
+| A group's **members** | `groups/<id>/`, as well as their own | `groups/<id>/` |
+| A group's **readers** (a member or a shared agent) | nothing there | `groups/<id>/` |
+
+### Groups
+
+Some things belong to a few people, not one and not everyone: a couple's plans, the kids' school stuff, a trip with friends. Those go in a **group**, `groups/<id>/`, which has the same layout as a person's root (no profile).
+
+- **Which root?** About one person → their root. About everyone → `household/`. About some of the family, and private from the rest → their group. A surprise for someone in the group doesn't go in the group: it goes in the teller's root.
+- The family's shared agent (FAITH on the kitchen screen, the family chat) **doesn't see groups** unless the group lists it as a reader, so nothing a couple writes shows on a shared screen. It may still write to a group's short-term memory by naming it, like a person's.
+- Each member's own token reaches their groups with no other setup: `whoami` lists them, `context_for` shows each group's day, `notes_list ""` shows `groups/<id>/`.
+- The memory tools and `conversation_log` take a group's name (or id or alias) as `person` / `group`.
+- Group notes may link to their members' `household/` notes; `household/` notes never link into `groups/` (rule 14).
+
+```
+node scripts/family-setup.mjs add-group us "Wizard & Sam" --member wizard --member sam --alias "the couple"
+node scripts/family-setup.mjs add-group kids "The kids" --member robin --reader sam --reader faith-parents
+node scripts/family-setup.mjs update-group kids --member jo --drop faith-parents
+node scripts/family-setup.mjs remove kids          # its folder stays, for the admin
+```
+
+What goes wrong: a group can't share a name, alias or id with a member or another group (`add-group` refuses it, and the bridge ignores such a group). A member who leaves the family leaves their groups; a group left with nobody goes. `groups/` is gitignored like `people/`, because this repo is public.
 
 **Telling people apart.** Each person's agents use that person's token, so the bridge always knows who is writing. When an agent can't know:
 - **Shared agent:** every write names `person` (an id, or `household`). If you don't know who you're talking to, **ask** ("Who's this for?") before writing. Use `who_is` to turn a name, nickname or Omi person name into an id. If a name could mean two people, it says so: ask which. When the conversation moves to someone else, the next write names *them* — never carry the last person's id over.
@@ -372,20 +397,20 @@ Preferred write path for any agent outside the container. Registered in the Herm
 
 | Key | Made with | Reads | Writes |
 |---|---|---|---|
-| A member's token | `token <id>` | their own folder, `household/` (with `household/parents/` for grown-ups), `schema/` | their own memory, `household/` |
+| A member's token | `token <id>` | their own folder, `household/` (with `household/parents/` for grown-ups), their groups, `schema/` | their own memory, `household/`, the groups they're a member of |
 | A child's token | `add-member --role child`, then `token <id>` | the same, but never `household/parents/` | the same, never `household/parents/` |
 | The admin's token for an assistant | `token <admin> --label faith --as member` | like any member: only their own folder | their own memory |
 | The family's shared agent (FAITH's household view) | `add-shared faith FAITH`, then `token faith` | `household/` (not `parents/`) and what each member shares | memory, naming the person |
 | The grown-ups' shared agent (FAITH's parents' chat) | `add-shared faith-parents "FAITH parents" --audience parents`, then `token faith-parents` | the same plus `household/parents/` | memory, naming the person |
 | A service (Upstream Manager) | `add-service <id> <name>`, then `token <id>` | `household/` (not `parents/`) | `household/` |
-| **The master key** | `token master --label <what for>` | every person's folder, `household/` (all of it), `schema/` | nothing |
+| **The master key** | `token master --label <what for>` | every person's folder, every group, `household/` (all of it), `schema/` | nothing |
 | The plugin's own key (whole vault) | Obsidian's Local REST API settings | everything | everything |
 
 - `household/parents/` holds the grown-ups' shared notes: gift ideas for the children, school letters. Children, services and the family's shared agent can't read, search or write it.
 - The master key is for your own tools: backups, a wiki dashboard, an export. **Never give it to an assistant that answers people**: it would see everyone's notes. It has no folder of its own and writes nothing.
 - `whoami`'s first line says who a token is, e.g. `You are acting for: Sam (member, id sam).`, `(child, id robin)`, `(shared, id faith)`, `(shared-parents, id faith-parents)`, `(master, id master)`. FAITH reads it to check each token is the one it should be.
 
-Family MCP tools: `whoami` (call first), `family_members`, `who_is`, `context_for` (one person's context, on every change of speaker), `conversation_log` (a conversation, filed per speaker), `memory_log`, `memory_capture`, `memory_add_source`, `memory_rollover`, `notes_list`, `note_read`, `notes_search`, `query_wiki`, `note_write`. The `memory_*` tools take `person` (an id or `household`): a shared agent must always pass it, a member may name only themselves or `household`, the admin anyone. Raw sources can only be created, and their `status` changed; `schema/` is read-only.
+Family MCP tools: `whoami` (call first), `family_members`, `who_is`, `context_for` (one person's context, on every change of speaker), `conversation_log` (a conversation, filed per speaker), `memory_log`, `memory_capture`, `memory_add_source`, `memory_rollover`, `notes_list`, `note_read`, `notes_search`, `query_wiki`, `note_write`. The `memory_*` tools take `person` (an id, a group, or `household`): a shared agent must always pass it, a member may name only themselves, a group they're a member of, or `household`, the admin anyone. Raw sources can only be created, and their `status` changed; `schema/` is read-only.
 
 **MCP tools for the admin (`/mcp`, master key):**
 
@@ -413,7 +438,7 @@ Local embeddings inside Obsidian (`.smart-env/`). Human-side semantic search.
 Was missing for weeks while `HOME.md` and area hubs already used `dataview` query blocks — those were rendering as plain text. Installed; the dashboard is only trustworthy as of this date.
 
 ### Second Brain embedding (`query_wiki` / `get_wiki` / `wiki_card`) — LIVE
-Scoped to every root's `wiki/` (`allowedPathPatterns: ^household/wiki/, ^people/[^/]+/wiki/`); the family `query_wiki` drops results the caller may not read. `daily/`, `inbox/`, `raw/` are never semantically searchable, by design (short-term tier isn't meant to be queried as truth). Model: `onnx-community/Qwen3-Embedding-0.6B-ONNX` (switched from Nomic v1.5, 2026-11-14) via the plugin's `custom` model slot.
+Scoped to every root's `wiki/` (`allowedPathPatterns: ^household/wiki/, ^people/[^/]+/wiki/, ^groups/[^/]+/wiki/`); the family `query_wiki` drops results the caller may not read. `daily/`, `inbox/`, `raw/` are never semantically searchable, by design (short-term tier isn't meant to be queried as truth). Model: `onnx-community/Qwen3-Embedding-0.6B-ONNX` (switched from Nomic v1.5, 2026-11-14) via the plugin's `custom` model slot.
 
 ### Karpathy LLM Wiki plugin — LIVE, scoped (2026-11-14)
 Re-enabled after sitting idle since 2026-10-30. Job: watch the daily folders (`autoWatchSources: true`, `watchedFolders: ["household/daily", "people/wizard/daily"]` — add each new member's), mode **`notify`** (prompts for confirmation, never silently ingests), extraction model `qwen3.5-2b` via Argos. Output lands in `karpathywiki/`, its own folder, never `wiki/`. Treat its entity/concept pages as a cheap first-pass draft during Rollover/Ingest — not citable, not promoted automatically. If this stops earning its keep, disable it again rather than letting it run unused.

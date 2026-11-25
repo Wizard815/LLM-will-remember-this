@@ -21,6 +21,9 @@
  *   A service token (e.g. Upstream Manager) works in household/; a shared
  *   agent (one assistant for the whole family) has no folder of its own and
  *   must name the person on every write.
+ *   Groups (a couple, the kids, a trip) have a shared folder groups/<id>/:
+ *   its members read and write it, its readers only read it, nobody else
+ *   (not the household's shared agent) sees it. The admin sees every group.
  */
 
 const { Plugin, Notice, requestUrl } = require("obsidian");
@@ -239,7 +242,36 @@ function normalizeRegistry(fm) {
     // audience "parents": the grown-ups' chat; it may read household/parents/ too.
     if (ID_RE.test(id)) shared.set(id, { id, name: String(s.name || id), audience: s.audience === "parents" ? "parents" : "family" });
   }
-  return { members, services, shared };
+  // Groups: a shared folder for some of the family. A group may not be called anything a member
+  // (or "household") is called, so a name in the memory tools always means one thing.
+  const groups = new Map();
+  const taken = new Set(["household"]);
+  for (const m of members.values()) for (const n of [m.id, m.name, ...m.aliases, ...m.voice, ...m.omi_people]) taken.add(n.toLowerCase());
+  for (const g of Array.isArray(f.groups) ? f.groups : []) {
+    const id = String((g && g.id) || "");
+    if (!ID_RE.test(id) || groups.has(id)) continue;
+    const names = [id, String(g.name || id), ...list(g.aliases)];
+    if (names.some((n) => taken.has(n.toLowerCase()))) continue;
+    const ms = [...new Set(list(g.members))].filter((x) => members.has(x));
+    const readers = [...new Set(list(g.readers))].filter((x) => (members.has(x) || shared.has(x)) && !ms.includes(x));
+    if (!ms.length) continue;
+    names.forEach((n) => taken.add(n.toLowerCase()));
+    groups.set(id, { id, name: names[1], aliases: list(g.aliases), members: ms, readers });
+  }
+  return { members, services, shared, groups };
+}
+
+/** The group a name, alias or id means (case-insensitive), or null. */
+function groupNamed(registry, name) {
+  const n = String(name || "").trim().toLowerCase();
+  if (!n || !registry.groups) return null;
+  return [...registry.groups.values()].find((g) => [g.id, g.name, ...g.aliases].some((x) => x.toLowerCase() === n)) || null;
+}
+
+/** The groups a member or shared agent is in: { groups: ids they write, readGroups: ids they only read }. */
+function groupsOf(registry, id) {
+  const all = registry.groups ? [...registry.groups.values()] : [];
+  return { groups: all.filter((g) => g.members.includes(id)).map((g) => g.id), readGroups: all.filter((g) => g.readers.includes(id)).map((g) => g.id) };
 }
 
 /** Every family member a name, alias, voice name or Omi person id could mean (case-insensitive). */
@@ -316,7 +348,7 @@ function principalFor(record, registry) {
     const m = registry.members.get(record.id);
     // A token issued "as member" never gets the admin's view of everyone (an assistant like FAITH,
     // which also answers on shared screens, should see only this person's own notes).
-    return m ? { kind: "member", id: m.id, name: m.name, role: record.as === "member" ? "member" : m.role, label: record.label || m.name } : null;
+    return m ? { kind: "member", id: m.id, name: m.name, role: record.as === "member" ? "member" : m.role, label: record.label || m.name, ...groupsOf(registry, m.id) } : null;
   }
   if (record.kind === "service") {
     const s = registry.services.get(record.id);
@@ -324,7 +356,7 @@ function principalFor(record, registry) {
   }
   if (record.kind === "shared") {
     const s = registry.shared.get(record.id);
-    return s ? { kind: "shared", id: s.id, name: s.name, role: "shared", audience: s.audience, label: record.label || s.name } : null;
+    return s ? { kind: "shared", id: s.id, name: s.name, role: "shared", audience: s.audience, label: record.label || s.name, ...groupsOf(registry, s.id) } : null;
   }
   // The master key: reads every person's notes and the household's, writes nothing, and is nobody.
   // For your own tools and backups, never for an assistant that answers people.
@@ -338,6 +370,14 @@ const grownUpsOnly = (real) => real === PARENTS_DIR || String(real).startsWith(`
 function mayReadParents(p) {
   return (p.kind === "member" && p.role !== "child") || (p.kind === "shared" && p.audience === "parents") || p.kind === "master";
 }
+
+/** groups/<id>/: the members write, the readers read, the admin (and the master key) see every group. */
+const GROUPS_DIR = "groups";
+const seesAllGroups = (p) => p.role === "admin" || p.kind === "master";
+const mayWriteGroup = (p, id) => (p.kind === "member" && p.role === "admin") || (p.kind === "member" && (p.groups || []).includes(id));
+const mayReadGroup = (p, id) => seesAllGroups(p) || mayWriteGroup(p, id) || (p.readGroups || []).includes(id);
+/** The groups whose folders a principal sees (ids), for listings; null means all of them. */
+const visibleGroups = (p) => (seesAllGroups(p) ? null : [...new Set([...(p.groups || []), ...(p.readGroups || [])])]);
 
 /** The folder a principal's own short-term memory lives in. */
 function homeOf(p) {
@@ -365,6 +405,15 @@ function resolvePathFor(vpath, p) {
   if (!v) return { real: "", root: true, write: false };
   if (segs[0] === "schema") return { real: v, write: false };
   if (segs[0] === "household") return { real: v, write: p.kind !== "shared" };
+  if (segs[0] === GROUPS_DIR) {
+    if (segs.length < 2) {
+      if (seesAllGroups(p)) return { real: v, write: false };
+      const mine = visibleGroups(p);
+      return { error: mine.length ? `Name the group: ${mine.map((g) => `groups/${g}/`).join(", ")}.` : "You aren't in any group." };
+    }
+    if (!mayReadGroup(p, segs[1])) return { error: `${GROUPS_DIR}/${segs[1]}/ is a group you aren't in: only its members, its readers and the admin can open it.` };
+    return { real: v, write: mayWriteGroup(p, segs[1]) };
+  }
   if (segs[0] === "people") {
     if (p.role === "admin" || (p.kind === "member" && segs[1] === p.id)) return { real: v, write: true };
     return { error: `${v} belongs to another family member: only they and the admin can open it.` };
@@ -384,6 +433,7 @@ function toVirtual(real, p) {
   if (p.kind === "service" && r.startsWith("household/")) return r.slice("household/".length);
   if (r.startsWith("household/") || r.startsWith("schema/")) return r;
   if (p.role === "admin" && r.startsWith("people/")) return r;
+  if (r.startsWith(`${GROUPS_DIR}/`) && mayReadGroup(p, r.split("/")[1])) return r;
   return null;
 }
 
@@ -531,6 +581,8 @@ class LlmwikiMcpBridge extends Plugin {
   rootFor(person, registry = this.registry()) {
     if (!this.familyOn(registry)) return "";
     if (!person || isHousehold(person)) return "household";
+    const g = groupNamed(registry, person);
+    if (g) return `${GROUPS_DIR}/${g.id}`;
     const r = resolveMember(registry, person);
     if (r.error) throw new Error(r.error);
     return `people/${r.member.id}`;
@@ -567,7 +619,7 @@ class LlmwikiMcpBridge extends Plugin {
     this.restApi = api;
     // The REST plugin wraps whatever a callback returns as the tool's text content.
     const forward = (tool, args) => this.callSecondBrain(rest, tool, args);
-    const person = optStr("Whose memory: a family member's id or name, or 'household' (default). Ignored in a single-user vault.");
+    const person = optStr("Whose memory: a family member's id or name, a group's (groups/<id>/), or 'household' (default). Ignored in a single-user vault.");
 
     api.addMcpTool(
       "query_wiki",
@@ -644,7 +696,7 @@ class LlmwikiMcpBridge extends Plugin {
   /** Every short-term root: each member, the household, or the vault root in a single-user vault. */
   allRoots(registry = this.registry()) {
     if (!this.familyOn(registry)) return [""];
-    return ["household", ...[...registry.members.keys()].map((id) => `people/${id}`)];
+    return ["household", ...[...registry.members.keys()].map((id) => `people/${id}`), ...[...registry.groups.keys()].map((id) => `${GROUPS_DIR}/${id}`)];
   }
 
   /* Wrap the built-in write tools' callbacks; MCP sessions built later pick them up. */
@@ -799,6 +851,12 @@ class LlmwikiMcpBridge extends Plugin {
       throw new Error(`Who is this for? A shared agent must name the person (${names}) or 'household' on every write; ask if you can't tell.`);
     }
     if (isHousehold(person)) return "household";
+    const g = groupNamed(reg, person);
+    if (g) {
+      // A shared agent may write a group's short-term memory, as it may a person's, without reading it.
+      if (mayWriteGroup(p, g.id) || p.kind === "shared") return `${GROUPS_DIR}/${g.id}`;
+      throw new Error(`You can't write to ${g.name}'s memory: only its members can.`);
+    }
     const r = resolveMember(reg, person);
     if (r.error) throw new Error(r.error);
     const m = r.member;
@@ -817,7 +875,7 @@ class LlmwikiMcpBridge extends Plugin {
 
   familyTools() {
     const S = (description, extra = {}) => ({ type: "string", description, ...extra });
-    const person = S("Whose memory: a family member's name or 'household'. A shared agent must always give it; a member may only name themselves or 'household'.");
+    const person = S("Whose memory: a family member's name, a group's name (whoami lists yours), or 'household'. A shared agent must always give it; a member may only name themselves, a group they're in, or 'household'.");
     const READ = { readOnlyHint: true }, WRITE = { readOnlyHint: false, destructiveHint: false };
     const tools = [
       { name: "whoami", annotations: READ, description: "Who this token belongs to, what it can read and write, and how the vault is laid out. Call it first.",
@@ -836,11 +894,11 @@ class LlmwikiMcpBridge extends Plugin {
       { name: "memory_add_source", annotations: WRITE, description: "A source document (transcript, export, report) into raw/sources/ for Ingest, status unprocessed. Never overwrites.",
         inputSchema: { type: "object", properties: { title: S("Title"), content: S("Content, markdown"), date: S("YYYY-MM-DD it is about (default today)"), person }, required: ["title", "content"] },
         run: (a, p) => this.memoryAddSource(a, this.familyRoot(p, a.person)).then((r) => this.relabel(r, p)) },
-      { name: "memory_rollover", annotations: WRITE, description: "File your open daily notes from before today into raw/sources/ for Ingest (the admin files everyone's). Run once a day.",
+      { name: "memory_rollover", annotations: WRITE, description: "File your open daily notes (and your groups') from before today into raw/sources/ for Ingest (the admin files everyone's). Run once a day.",
         inputSchema: { type: "object", properties: { day: S("Only this day, YYYY-MM-DD") } },
         run: (a, p) => {
           if (p.kind === "shared") throw new Error("A shared agent can't roll over memory; the admin's daily job does.");
-          return this.memoryRollover(a, p.role === "admin" ? this.allRoots() : [homeOf(p)]).then((r) => this.relabel(r, p));
+          return this.memoryRollover(a, p.role === "admin" ? this.allRoots() : [homeOf(p), ...(p.groups || []).map((g) => `${GROUPS_DIR}/${g}`)]).then((r) => this.relabel(r, p));
         } },
       { name: "context_for", annotations: READ, description: "Everything you should know before answering one person: their profile, today's daily note and open follow-ups (a shared agent gets only what they share, plus the household's day). Call it whenever the person you are talking to changes, and keep each person's context to their own turns.",
         inputSchema: { type: "object", properties: { person: S("Who you are about to help: a name, alias or 'household'. Members may leave it out (themselves).") } },
@@ -857,9 +915,10 @@ class LlmwikiMcpBridge extends Plugin {
           overview: S("A summary of the conversation (Omi's overview), filed above the transcript"),
           action_items: { type: "array", description: "Follow-ups from it: strings, or { description, completed? } as Omi sends them", items: {} },
           people: { type: "array", description: "Family members who took part, by name: who it is filed for when there are no segments", items: { type: "string" } },
+          group: S("A group it belongs to (e.g. a couple or a trip): also file it in that group's folder"),
         } },
         run: (a, p) => this.conversationLog(a, p).then((r) => this.relabel(r.text, p)) },
-      { name: "notes_list", annotations: READ, description: "List a folder. '' is your view of the vault: your own folders, household/ and schema/ (the admin also sees people/).",
+      { name: "notes_list", annotations: READ, description: "List a folder. '' is your view of the vault: your own folders, household/, your groups/<id>/ and schema/ (the admin also sees people/).",
         inputSchema: { type: "object", properties: { path: S("Folder, e.g. 'wiki/1-projects' or 'household/wiki/3-resources'") } },
         run: (a, p) => this.notesList(a.path || "", p) },
       { name: "note_read", annotations: READ, description: "Read one note you can see, in full.",
@@ -868,10 +927,10 @@ class LlmwikiMcpBridge extends Plugin {
       { name: "notes_search", annotations: READ, description: "Find notes you can see that contain words (exact, case-insensitive), with a snippet each. Other people's notes are never searched.",
         inputSchema: { type: "object", properties: { query: S("Words to find") }, required: ["query"] },
         run: (a, p) => this.notesSearch(a.query, p) },
-      { name: "query_wiki", annotations: READ, description: "Semantic search over the long-term wiki you can see (yours and the household's). Always returns the nearest notes, even off-topic ones: if they don't answer the question, say the wiki doesn't know.",
+      { name: "query_wiki", annotations: READ, description: "Semantic search over the long-term wiki you can see (yours, your groups' and the household's). Always returns the nearest notes, even off-topic ones: if they don't answer the question, say the wiki doesn't know.",
         inputSchema: { type: "object", properties: { query: S("Natural-language question") }, required: ["query"] },
         run: (a, p) => this.familyQueryWiki(a.query, p) },
-      { name: "note_write", annotations: WRITE, description: "Create, overwrite or append to a note you may write (your own folders or household/). For Ingest and Capture; use the memory tools for logging. Sources in raw/ are never changed.",
+      { name: "note_write", annotations: WRITE, description: "Create, overwrite or append to a note you may write (your own folders, household/, or a group you're in). For Ingest and Capture; use the memory tools for logging. Sources in raw/ are never changed.",
         inputSchema: { type: "object", properties: { path: S("Path, e.g. 'wiki/1-projects/Sewing Quilt.md'"), content: S("Markdown"), mode: S("create (default: fails if it exists), overwrite or append", { enum: ["create", "overwrite", "append"] }) }, required: ["path", "content"] },
         run: (a, p) => this.noteWrite(a, p) },
     ];
@@ -879,7 +938,7 @@ class LlmwikiMcpBridge extends Plugin {
   }
 
   relabel(text, p) {
-    return String(text).replace(/(?:people\/[a-z][a-z0-9-]*|household)\/[^\n"]*?\.md/g, (m) => this.shown(m, p));
+    return String(text).replace(/(?:(?:people|groups)\/[a-z][a-z0-9-]*|household)\/[^\n"]*?\.md/g, (m) => this.shown(m, p));
   }
 
   whoamiText(p) {
@@ -899,6 +958,12 @@ class LlmwikiMcpBridge extends Plugin {
     } else {
       lines.push("You are a shared agent: you help several family members. Name the person (or 'household') on every write; if you can't tell who you are talking to, ask. You can read household/ and what each member shares (family_members), never their private notes.");
     }
+    const mine = (p.groups || []).map((id) => reg.groups.get(id)).filter(Boolean);
+    const readOnly = (p.readGroups || []).map((id) => reg.groups.get(id)).filter(Boolean);
+    const others = (g) => g.members.filter((x) => x !== p.id).map((x) => (reg.members.get(x) || { name: x }).name).join(", ");
+    if (mine.length) lines.push(`Your groups (shared with only their members; read and write; name one as person in the memory tools): ${mine.map((g) => `${g.name} (groups/${g.id}/, with ${others(g) || "nobody else yet"})`).join("; ")}.`);
+    if (readOnly.length) lines.push(`Groups you may read but not write: ${readOnly.map((g) => `${g.name} (groups/${g.id}/)`).join("; ")}.`);
+    if (mine.length || readOnly.length || (p.role === "admin" && reg.groups.size)) lines.push("A group's notes are for its members: don't repeat them to anyone outside the group.");
     lines.push("Switching between people? Call context_for with the person before answering them; file what was said with conversation_log.");
     lines.push(`Family: ${[...reg.members.values()].map((m) => `${m.name} (${m.id})`).join(", ") || "(no members yet)"}.`);
     lines.push("Rules: schema/agents.md. Write only short-term memory (memory_* tools); the long-term wiki is filed by Ingest. Never store secrets.");
@@ -946,6 +1011,12 @@ class LlmwikiMcpBridge extends Plugin {
         out.push(`## Today (${day})`, "", (await this.readCapped(`people/${target.id}/daily/${day}.md`)) || "(nothing logged yet)", "");
         const inbox = this.childrenOf(`people/${target.id}/inbox`).filter((n) => n.endsWith(".md"));
         if (inbox.length) out.push(`## Inbox (${inbox.length} waiting to be filed)`, "", ...inbox.slice(0, 20).map((n) => `- ${n}`), "");
+        // Their groups' days, only for the person themselves (or the admin): never for a shared agent.
+        for (const g of reg.groups.values()) {
+          if (!g.members.includes(target.id)) continue;
+          const names = g.members.map((x) => (reg.members.get(x) || { name: x }).name).join(", ");
+          out.push(`## ${g.name} today (group: ${names})`, "", (await this.readCapped(`${GROUPS_DIR}/${g.id}/daily/${day}.md`)) || "(nothing logged yet)", "");
+        }
       } else {
         const f = this.app.vault.getAbstractFileByPath(profile);
         const shared = f ? sectionText(await this.app.vault.read(f), "Shared with the family") : "";
@@ -997,6 +1068,10 @@ class LlmwikiMcpBridge extends Plugin {
     else if (p.kind === "service") roots = ["household"];
     else roots = [...speakers.keys()].map((id) => `people/${id}`);
     if (a.shared && p.kind !== "service") roots.push("household");
+    if (a.group) {
+      if (!groupNamed(reg, a.group)) throw new Error(`group: "${a.group}" isn't a group in schema/family.md.`);
+      roots.push(this.familyRoot(p, a.group));
+    }
     roots = [...new Set(roots)];
     if (!roots.length) {
       throw new Error(`Nobody in this conversation is a known family member (${[...unknown].join(", ") || "no speakers named"}). Ask who was speaking and send it again with person on each line, or pass shared: true if it was a household conversation.`);
@@ -1034,7 +1109,9 @@ class LlmwikiMcpBridge extends Plugin {
     if (r.root) {
       const home = homeOf(p);
       const own = home ? this.childrenOf(home) : [];
-      return JSON.stringify({ files: [...own, "household/", "schema/", ...(p.role === "admin" ? ["people/"] : [])] }, null, 2);
+      const groups = visibleGroups(p);
+      const g = groups === null ? ["groups/"] : groups.filter((id) => this.registry().groups.has(id)).map((id) => `groups/${id}/`);
+      return JSON.stringify({ files: [...own, "household/", ...g, "schema/", ...(p.role === "admin" ? ["people/"] : [])] }, null, 2);
     }
     const folder = this.app.vault.getAbstractFileByPath(r.real);
     if (!folder || !folder.children) throw new Error(`No folder at ${vpath}.`);
@@ -1350,5 +1427,5 @@ module.exports.helpers = {
   normPath, safeTitle, findSecret, fillTemplate, insertUnderHeading, guardRaw, capQueryResult, ymd, rolloverText,
   dailyStatus, decodeJsonContent, sectionText, isRaw, normalizeRegistry, whoIs, principalFor, homeOf, resolvePath,
   membersMatching, resolveMember, isGenericSpeaker, speakerOf, renderTranscript, renderStructured,
-  toVirtual, guardFamilyWrite, filterQueryYaml, checkArgs,
+  toVirtual, guardFamilyWrite, filterQueryYaml, checkArgs, groupNamed, groupsOf,
 };

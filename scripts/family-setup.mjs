@@ -8,6 +8,10 @@
 //   node scripts/family-setup.mjs add-service <id> <name> e.g. upstream-manager: writes household/
 //   node scripts/family-setup.mjs add-shared <id> <name>  one assistant for the whole family
 //                                  [--audience parents]   one for the grown-ups' chat (reads household/parents/ too)
+//   node scripts/family-setup.mjs add-group <id> <name>   a folder some of the family share, groups/<id>/
+//                                  --member X (repeatable)  who reads and writes it (a couple, the kids, a trip)
+//                                  [--reader X]             who only reads it (a member or a shared agent)
+//   node scripts/family-setup.mjs update-group <id>       --member X / --reader X adds, --drop X takes out
 //   node scripts/family-setup.mjs token <id>              prints a new token once; only its hash is kept
 //                                  [--as member]          for the admin: a token that sees only their own notes
 //                                                          (for an assistant like FAITH that also serves shared screens)
@@ -15,7 +19,7 @@
 //                                                          never give it to an assistant that answers people
 //   node scripts/family-setup.mjs update <id> [flags]     add names or Omi ids to someone
 //   node scripts/family-setup.mjs revoke <id>             removes every token of <id>
-//   node scripts/family-setup.mjs remove <id>             takes someone out (tokens too); keeps their folder
+//   node scripts/family-setup.mjs remove <id>             takes someone (or a group) out (tokens too); keeps the folder
 //   node scripts/family-setup.mjs list                    who is in the family and who has tokens
 //
 // Flags instead of questions: --id --name --role admin|member|child --alias X (repeatable), --voice X
@@ -33,15 +37,29 @@ const ID_RE = /^[a-z][a-z0-9-]{0,31}$/;
 const DEFAULT_HOUSEHOLD_AREAS = ["homelab", "ai", "automation", "knowledge", "travel"];
 const PARA = ["1-projects", "2-areas", "3-resources", "4-archive", "logs"];
 const SKELETON = ["daily", "inbox", "raw/sources", ...PARA.map((p) => `wiki/${p}`)];
+// The folders the Second Brain extension embeds for query_wiki: every root's long-term wiki/.
+const SEARCHED = ["^household/wiki/", "^people/[^/]+/wiki/", "^groups/[^/]+/wiki/"];
+const SECOND_BRAIN = ".obsidian/plugins/local-rest-api-second-brain-mcp-extension/data.json";
+
+/** Make sure query_wiki also searches groups/<id>/wiki/ (vaults set up before groups existed). */
+function searchGroups(vault) {
+  const sb = join(vault, SECOND_BRAIN);
+  if (!existsSync(sb)) return false;
+  const d = JSON.parse(readFileSync(sb, "utf8"));
+  const pats = Array.isArray(d.allowedPathPatterns) ? d.allowedPathPatterns : [];
+  if (pats.includes(SEARCHED[2])) return false;
+  writeFileSync(sb, JSON.stringify({ ...d, allowedPathPatterns: [...pats, SEARCHED[2]] }, null, 2) + "\n");
+  return true;
+}
 
 function parseArgs(argv) {
-  const out = { _: [], alias: [], voice: [], omi_person: [] };
+  const out = { _: [], alias: [], voice: [], omi_person: [], member: [], reader: [], drop: [] };
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i];
     if (!a.startsWith("--")) { out._.push(a); continue; }
     const key = a.slice(2), value = argv[i + 1];
     i += 1;
-    if (key === "alias" || key === "voice" || key === "omi-person") out[key.replace(/-/g, "_")].push(value);
+    if (["alias", "voice", "omi-person", "member", "reader", "drop"].includes(key)) out[key.replace(/-/g, "_")].push(value);
     else out[key.replace(/-/g, "_")] = value;
   }
   return out;
@@ -52,12 +70,12 @@ function parseArgs(argv) {
 // One JSON object per list item: valid YAML (flow mappings), and easy to edit by hand in the same shape.
 export function readFamily(vault) {
   const path = join(vault, "schema/family.md");
-  const fam = { members: [], services: [], shared_agents: [] };
+  const fam = { members: [], services: [], shared_agents: [], groups: [] };
   if (!existsSync(path)) return fam;
   const fm = /^---\n([\s\S]*?)\n---/.exec(readFileSync(path, "utf8"));
   let section = null;
   for (const line of (fm ? fm[1] : "").split("\n")) {
-    const head = /^(members|services|shared_agents):\s*(\[\])?\s*$/.exec(line);
+    const head = /^(members|services|shared_agents|groups):\s*(\[\])?\s*$/.exec(line);
     if (head) { section = head[1]; continue; }
     const item = /^\s+-\s+(\{.*\})\s*$/.exec(line);
     if (item && section) fam[section].push(JSON.parse(item[1]));
@@ -74,6 +92,7 @@ tags: [registry]
 ${block("members", fam.members)}
 ${block("services", fam.services)}
 ${block("shared_agents", fam.shared_agents)}
+${block("groups", fam.groups || [])}
 ---
 
 # Family
@@ -91,6 +110,10 @@ per line, same shape).
 - **shared_agents**: one assistant for the whole family. It has no folder of its own, must name the
   person on every write, and asks who it is talking to when it can't tell. \`audience: parents\` is
   the grown-ups' one: it also reads \`household/parents/\`, the grown-ups' shared notes.
+- **groups**: a folder \`groups/<id>/\` that some of the family share (a couple, the kids, a trip), laid
+  out like a person's. \`members\` read and write it; \`readers\` (members or shared agents) only read it;
+  the admin sees every group. The family's shared agent doesn't see a group unless it is a reader.
+  A group can't be called anything a member is called.
 
 Tokens are never stored here: \`family-setup.mjs token <id>\` prints one once and keeps only its hash.
 `;
@@ -153,13 +176,13 @@ export function createRoot(vault, root, member = null) {
   for (const d of SKELETON) mkdirSync(join(vault, root, d), { recursive: true });
   const readme = join(vault, root, "daily/README.md");
   if (!existsSync(readme)) {
-    writeFileSync(readme, `# Daily — short-term memory${member ? ` (${member.name})` : " (household)"}\n\nOne note per day, \`YYYY-MM-DD.md\`, from \`schema/templates/DAILY.md\`. Agents and services append with \`memory_log\`; the daily Rollover (\`memory_rollover\`) files each finished day into \`raw/sources/\` for Ingest. See \`schema/agents.md\`.\n`);
+    writeFileSync(readme, `# Daily — short-term memory${member ? ` (${member.name})` : root.startsWith("groups/") ? "" : " (household)"}\n\nOne note per day, \`YYYY-MM-DD.md\`, from \`schema/templates/DAILY.md\`. Agents and services append with \`memory_log\`; the daily Rollover (\`memory_rollover\`) files each finished day into \`raw/sources/\` for Ingest. See \`schema/agents.md\`.\n`);
   }
   for (const d of ["inbox", "raw/sources", ...PARA.map((p) => `wiki/${p}`)]) {
     const keep = join(vault, root, d, ".gitkeep");
     if (!readdirSync(join(vault, root, d)).length) writeFileSync(keep, "");
   }
-  if (member && !existsSync(join(vault, root, "profile.md"))) writeFileSync(join(vault, root, "profile.md"), profileText(vault, member));
+  if (member && !root.startsWith("groups/") && !existsSync(join(vault, root, "profile.md"))) writeFileSync(join(vault, root, "profile.md"), profileText(vault, member));
 }
 
 /* ------------------------------------------------------------------ migration of a single-person vault */
@@ -354,7 +377,7 @@ export function migrate(vault, admin, householdAreas = DEFAULT_HOUSEHOLD_AREAS) 
   const sb = join(vault, ".obsidian/plugins/local-rest-api-second-brain-mcp-extension/data.json");
   if (existsSync(sb)) {
     const d = JSON.parse(readFileSync(sb, "utf8"));
-    writeFileSync(sb, JSON.stringify({ ...d, allowedPathPatterns: ["^household/wiki/", "^people/[^/]+/wiki/"] }, null, 2) + "\n");
+    writeFileSync(sb, JSON.stringify({ ...d, allowedPathPatterns: SEARCHED }, null, 2) + "\n");
   }
   const kw = join(vault, ".obsidian/plugins/karpathywiki/data.json");
   if (existsSync(kw)) {
@@ -402,12 +425,33 @@ export function memberProblem(fam, m) {
     if (String(n).trim().toLowerCase() === "household") return `"${n}" is the shared folder's name; pick another`;
     if (GENERIC_SPEAKER_RE.test(String(n).trim())) return `"${n}" is a per-conversation speaker label (Omi numbers voices again in every conversation), so it can't name a person; use the name in Omi's People list`;
   }
+  for (const g of fam.groups || []) {
+    const clash = namesOf(m).find((n) => [g.id, g.name, ...(g.aliases || [])].some((x) => String(x).toLowerCase() === n));
+    if (clash) return `"${clash}" is the name of the group ${g.name}; pick another`;
+  }
   for (const other of fam.members) {
     if (other.id === m.id) continue;
     const clash = namesOf(m).find((n) => namesOf(other).includes(n));
     if (clash) return `"${clash}" already means ${other.name}; two people can't share a name, alias or Omi id`;
     if (m.omi_uid && other.omi_uid === m.omi_uid) return `that Omi account is already ${other.name}'s`;
   }
+  return null;
+}
+
+/** Why a group can't be stored as it is, or null. */
+export function groupProblem(fam, g) {
+  if (!ID_RE.test(g.id || "")) return `"${g.id || ""}" can't be a group id: lowercase letter first, then letters, digits or -, at most 32.`;
+  const taken = new Set(["household", ...fam.members.flatMap(namesOf)]);
+  for (const other of fam.groups || []) if (other.id !== g.id) [other.id, other.name, ...(other.aliases || [])].forEach((n) => taken.add(String(n).toLowerCase()));
+  const clash = [g.id, g.name, ...(g.aliases || [])].find((n) => taken.has(String(n).toLowerCase()));
+  if (clash) return `"${clash}" already means someone (or another group); a group needs a name of its own`;
+  if (!g.members.length) return "a group needs at least one member (--member <id>)";
+  const ids = new Set(fam.members.map((m) => m.id));
+  const readable = new Set([...ids, ...fam.shared_agents.map((s) => s.id)]);
+  const bad = g.members.find((x) => !ids.has(x)) || (g.readers || []).find((x) => !readable.has(x));
+  if (bad) return `"${bad}" isn't a family member${g.members.includes(bad) ? "" : " or a shared agent"}`;
+  const both = (g.readers || []).find((x) => g.members.includes(x));
+  if (both) return `"${both}" is already a member, who reads and writes`;
   return null;
 }
 
@@ -485,6 +529,37 @@ export async function run(argv, { interactive = process.stdin.isTTY } = {}) {
         log(`Added ${cmd === "add-service" ? "service" : "shared agent"} ${id}. Issue a token with: token ${id}`);
         return { id };
       }
+      case "add-group": {
+        if (!fam.members.length) throw new Error("run init first");
+        const [id, ...name] = rest;
+        if ((fam.groups || []).some((g) => g.id === id)) throw new Error(`${id} is already a group; use update-group`);
+        const g = { id, name: name.join(" ") || id, members: [...new Set(args.member)], ...(args.reader.length ? { readers: [...new Set(args.reader)] } : {}) };
+        if (args.alias.length) g.aliases = args.alias;
+        const why = groupProblem(fam, g);
+        if (why) throw new Error(why);
+        fam.groups = [...(fam.groups || []), g];
+        writeFamily(vault, fam);
+        createRoot(vault, `groups/${id}`);
+        const searched = searchGroups(vault);
+        log(`Added the group ${g.name}: groups/${id}/, for ${g.members.join(", ")}${g.readers ? `; read by ${g.readers.join(", ")}` : ""}. Their own tokens reach it now.${searched ? " query_wiki now searches groups/ too (restart Obsidian to embed them)." : ""}`);
+        return g;
+      }
+      case "update-group": {
+        const g = (fam.groups || []).find((x) => x.id === rest[0]);
+        if (!g) throw new Error(`${rest[0]} isn't a group`);
+        const drop = new Set(args.drop);
+        const next = { ...g, members: [...new Set([...g.members, ...args.member])].filter((x) => !drop.has(x)),
+          readers: [...new Set([...(g.readers || []), ...args.reader])].filter((x) => !drop.has(x) && !args.member.includes(x)) };
+        if (args.name) next.name = args.name;
+        if (args.alias.length) next.aliases = [...new Set([...(g.aliases || []), ...args.alias])];
+        if (!next.readers.length) delete next.readers;
+        const why = groupProblem(fam, next);
+        if (why) throw new Error(why);
+        fam.groups[fam.groups.indexOf(g)] = next;
+        writeFamily(vault, fam);
+        log(`Updated ${next.name}: members ${next.members.join(", ")}${next.readers ? `; readers ${next.readers.join(", ")}` : ""}.`);
+        return next;
+      }
       case "token": {
         const { token, kind } = issueToken(vault, rest[0], args.label, args.as);
         log(`Token for ${rest[0]} (${kind}). It is shown only now; store it in that app's settings:\n\n  ${token}\n`);
@@ -505,12 +580,21 @@ export async function run(argv, { interactive = process.stdin.isTTY } = {}) {
       }
       case "remove": {
         const id = rest[0];
-        const key = ["members", "services", "shared_agents"].find((k) => fam[k].some((x) => x.id === id));
+        const key = ["members", "services", "shared_agents", "groups"].find((k) => (fam[k] || []).some((x) => x.id === id));
         if (!key) throw new Error(`${id} isn't in schema/family.md`);
         const x = fam[key].find((y) => y.id === id);
         if (key === "members" && x.role === "admin" && fam.members.filter((y) => y.role === "admin").length === 1) throw new Error("that's the only admin; make someone else admin first");
         fam[key] = fam[key].filter((y) => y.id !== id);
+        // Out of every group too; a group left with no members goes (its folder stays, for the admin).
+        const emptied = [];
+        fam.groups = (fam.groups || []).map((g) => ({ ...g, members: g.members.filter((m) => m !== id), ...(g.readers ? { readers: g.readers.filter((r) => r !== id) } : {}) }))
+          .filter((g) => g.members.length || !emptied.push(g.id));
         writeFamily(vault, fam);
+        if (key === "groups") {
+          log(`Removed the group ${x.name}. Its folder groups/${id}/ is kept; only the admin can open it now.`);
+          return { removed: id, tokens: 0 };
+        }
+        if (emptied.length) log(`The group(s) ${emptied.join(", ")} had nobody left and were removed; their folders are kept.`);
         const n = revoke(vault, id);
         log(`Removed ${x.name} and ${n} token(s).${key === "members" ? ` Their folder people/${id}/ is kept; only the admin can open it now. Delete it yourself if they want it gone.` : ""}`);
         return { removed: id, tokens: n };
@@ -526,6 +610,7 @@ export async function run(argv, { interactive = process.stdin.isTTY } = {}) {
         for (const m of fam.members) log(`member  ${m.id.padEnd(18)} ${m.name} (${m.role}) tokens: ${n(m.id)}`);
         for (const s of fam.services) log(`service ${s.id.padEnd(18)} ${s.name} tokens: ${n(s.id)}`);
         for (const s of fam.shared_agents) log(`shared  ${s.id.padEnd(18)} ${s.name} tokens: ${n(s.id)}`);
+        for (const g of fam.groups || []) log(`group   ${g.id.padEnd(18)} ${g.name}: ${g.members.join(", ")}${g.readers ? ` (read by ${g.readers.join(", ")})` : ""}`);
         return fam;
       }
       default:
