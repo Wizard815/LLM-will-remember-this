@@ -15,6 +15,5 @@ related: ["[[Outdoor & Travel]]"]
 
 **Area:** [[Outdoor & Travel]] · **Outcome:** archived after the trip dates passed
 
-- **Dates:** July 31 – August 2, 2026
-- **Stayed at:** Island House Hotel
+- **When:** summer 2026
 - Archived on 2026-10-27 because the dates had passed. Add notes from the trip if you have any worth keeping.

@@ -38,7 +38,7 @@ Wizard's primary server. **Area:** [[Homelab]]
 
 - **OS:** Unraid **7.2.0**, kernel 6.12.54-Unraid (checked at 25 days uptime)
 - **Hostname:** `RaidLab` — LAN IP **<RAIDLAB_LAN_IP>** on `br0` (bond0 over the NICs; eth2 is the live link). Tailscale plugin installed (`tailscale1` interface present).
-- **External access:** Cloudflare Tunnel (`Unraid-Cloudflared-Tunnel`) + Nginx Proxy Manager under `thefellashub.com`
+- **External access:** Cloudflare Tunnel (`Unraid-Cloudflared-Tunnel`) + Nginx Proxy Manager under `<PUBLIC_DOMAIN>`
 - **Management:** agents can use the Unraid MCP (`unraid-management-agent` plugin) for status, containers and hardware
 
 ## Storage

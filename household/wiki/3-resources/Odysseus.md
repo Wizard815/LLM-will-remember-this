@@ -30,4 +30,4 @@ Wizard's self-hosted AI workspace on [[RaidLab]]. **Area:** [[Local AI]]
 - Connected to [[LLMWIKI]]
 
 > [!note] History
-> In June it ran from `/mnt/cache/appdata/odysseus` with the Docker Hub image `zenth815/odysseus-frontend:latest`.
+> In June it ran from `/mnt/cache/appdata/odysseus` with a prebuilt frontend image from Docker Hub.

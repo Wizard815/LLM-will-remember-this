@@ -26,7 +26,7 @@ function legacyVault() {
     "wiki/3-resources/RaidLab.md": note("RaidLab", "resource", "homelab", "resource_kind: system\n"),
     "wiki/3-resources/Wizard.md": note("Wizard", "resource", "knowledge", "resource_kind: person\n"),
     "wiki/4-archive/Mackinac Island Trip.md": note("Mackinac Island Trip", "project", "travel", "project_status: done\n"),
-    "wiki/4-archive/Engagement Ring Shopping.md": note("Engagement Ring Shopping", "project", "personal", "project_status: done\n"),
+    "wiki/4-archive/Gift Shopping.md": note("Gift Shopping", "project", "personal", "project_status: done\n"),
     "wiki/logs/Log - 2026-10-27.md": "---\ntitle: Log\ntype: log\n---\nSee [[raw/sources/2026-10-27 - Knowledge Snapshot]].\n",
     "daily/README.md": "# daily\n",
     "daily/2026-11-14.md": "---\ntype: daily\nstatus: open\n---\n",
@@ -54,7 +54,7 @@ test("init moves the homelab to household/ and the admin's own notes to people/<
   assert.ok(existsSync(join(v, "household/wiki/3-resources/RaidLab.md")), "homelab is the household's");
   assert.ok(existsSync(join(v, "household/wiki/2-areas/Homelab.md")));
   assert.ok(existsSync(join(v, "household/wiki/4-archive/Mackinac Island Trip.md")), "trips are shared");
-  assert.ok(existsSync(join(v, "people/wizard/wiki/4-archive/Engagement Ring Shopping.md")), "a personal note stays private");
+  assert.ok(existsSync(join(v, "people/wizard/wiki/4-archive/Gift Shopping.md")), "a personal note stays private");
   assert.ok(existsSync(join(v, "people/wizard/wiki/2-areas/Personal.md")));
   assert.ok(existsSync(join(v, "people/wizard/wiki/2-areas/TTRPG.md")), "hobby areas are the admin's");
   assert.ok(existsSync(join(v, "people/wizard/wiki/3-resources/Wizard.md")), "the note about the admin is theirs");
@@ -74,8 +74,8 @@ test("init moves the homelab to household/ and the admin's own notes to people/<
   assert.deepEqual(JSON.parse(read(v, ".obsidian/plugins/local-rest-api-second-brain-mcp-extension/data.json")).allowedPathPatterns, ["^household/wiki/", "^people/[^/]+/wiki/", "^groups/[^/]+/wiki/"]);
   assert.deepEqual(readFamily(v).members, [{ id: "wizard", name: "Wizard", role: "admin", aliases: ["Wiz"], voice: [], omi_uid: "uid-wizard" }]);
   // The household log names a note that is now private: init reports it.
-  writeFileSync(join(v, "household/wiki/logs/Log - 2026-11-01.md"), "Filed [[Engagement Ring Shopping]] and [[RaidLab]].\n");
-  assert.deepEqual(sharedLinksToPrivate(v), [{ note: "household/wiki/logs/Log - 2026-11-01.md", links: ["Engagement Ring Shopping"] }]);
+  writeFileSync(join(v, "household/wiki/logs/Log - 2026-11-01.md"), "Filed [[Gift Shopping]] and [[RaidLab]].\n");
+  assert.deepEqual(sharedLinksToPrivate(v), [{ note: "household/wiki/logs/Log - 2026-11-01.md", links: ["Gift Shopping"] }]);
   await assert.rejects(cli(v, "init", "--name", "X"), /already has members/);
 });
 

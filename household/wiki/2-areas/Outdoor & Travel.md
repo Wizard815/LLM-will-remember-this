@@ -12,7 +12,7 @@ related: []
 
 # Outdoor & Travel
 
-Camping, fishing, hiking and trips — home base is Grand Rapids, MI.
+Camping, fishing, hiking and trips.
 
 ## Current state
 

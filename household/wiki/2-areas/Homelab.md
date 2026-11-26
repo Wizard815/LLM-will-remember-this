@@ -12,7 +12,7 @@ related: ["[[RaidLab]]", "[[Local AI]]", "[[Automation]]"]
 
 # Homelab
 
-Self-hosted infrastructure built around [[RaidLab]] (Unraid). Goal: services stay up, are reachable under `thefellashub.com`, and are documented here.
+Self-hosted infrastructure built around [[RaidLab]] (Unraid). Goal: services stay up, are reachable under `<PUBLIC_DOMAIN>`, and are documented here.
 
 ## Current state (live check 2026-10-27)
 
@@ -22,7 +22,7 @@ Self-hosted infrastructure built around [[RaidLab]] (Unraid). Goal: services sta
 - **Server:** [[RaidLab]]: HPE ML350 Gen10, 2× Xeon Gold 6152, 256 GB ECC, Unraid 7.2.0, **86 containers (53 running)**. Full inventory is in [[RaidLab]].
 - **Code:** many services run from Wizard's own repos or forks (ALLGlance → the glance apps, milaclone, mcp-kanka, argos, odysseus, mx-llama.cpp) → [[GitHub Repos]]
 - **VMs:** `HA` = **Home Assistant**; `PonderingOrb` = **RDP machine** for getting into the homelab. `GlaDOS` and `WindowsServer2025` are off.
-- **External access:** Cloudflare Tunnel + Nginx Proxy Manager under `thefellashub.com`; Tailscale; remote desktop through `PonderingOrb`
+- **External access:** Cloudflare Tunnel + Nginx Proxy Manager under `<PUBLIC_DOMAIN>`; Tailscale; remote desktop through `PonderingOrb`
 - **Network/infra services:** Technitium DNS, Omada controller, Gluetun + VPN download clients, Guacamole, code-server
 - **Media:** Plex Pass + Sonarr/Radarr/Prowlarr/Readarr, Tautulli, Seerr, Plex-Auto-Languages → see [[Plex Media Conversion Pipeline]]
 - **Household apps:** Vaultwarden, Syncthing, Homebox, Mealie, Vikunja, Wallos, Cronicle

@@ -205,7 +205,7 @@ Two tiers. Don't blur them.
 12. **Unverified facts are drafts** — if a fact may be out of date, set `status: draft` and add a `> [!warning] Verify` callout naming what to check.
 13. **Every fact has an owner.** File it in the root of the person it's about (or `household/`). Never mix two people's facts in one note; link between them instead. If you don't know whose it is, ask.
 14. **Links don't cross into private roots.** A `household/` note never links to or quotes a note in `people/` — a title alone can give a surprise away. A person's note may link to `household/`. The one exception is citing a source (`source: "[[people/<id>/raw/sources/…]]"`): source names are a date and a generic title, and nobody else can open them.
-15. **This repo is public — treat `git` as a public-publish step, not just a backup.** `people/` and `schema/.network-private.md` are gitignored on purpose (scrubbed from history 2026-11-18, after real LAN IPs and personal content had been committed) — never remove them from `.gitignore` or `git add -f` them. Any note that ends up tracked (anything under `household/`, `schema/`, `wiki/`) must use the placeholders `<RAIDLAB_LAN_IP>` / `<CODEBOX_LAN_IP>` instead of real addresses (real values: `schema/.network-private.md`, not tracked). If a real IP, personal detail, or secret lands in a tracked note, treat it as already public the moment the next auto-commit/push runs — fix it immediately, don't wait for a maintenance pass.
+15. **This repo is public — treat `git` as a public-publish step, not just a backup.** `people/` and `schema/.network-private.md` are gitignored on purpose (scrubbed from history 2026-11-18, after real LAN IPs and personal content had been committed) — never remove them from `.gitignore` or `git add -f` them. Any note that ends up tracked (anything under `household/`, `schema/`, `wiki/`) must use the placeholders `<RAIDLAB_LAN_IP>` / `<CODEBOX_LAN_IP>` / `<PUBLIC_DOMAIN>` instead of real addresses and domains (real values: `schema/.network-private.md`, not tracked). If a real IP, personal detail, or secret lands in a tracked note, treat it as already public the moment the next auto-commit/push runs — fix it immediately, don't wait for a maintenance pass.
 
 ---
 
@@ -448,7 +448,7 @@ Campaign `376198` via the `mcp-kanka` container. See [[Kanka MCP]].
 
 
 ### LegendKeeper — LIVE (TTRPG, migration target)
-World **BloodEarth** (`cmvy7ds5u020o3lojg3qqee39`, private), reached through the `legendkeeper` MCP (an unofficial integration, **write-enabled**). Pages are read and written as Markdown, and `> [!secret]` marks GM-only text. Destructive tools need `confirm=true`, so ask Wizard first.
+World **BloodEarth** (private), reached through the `legendkeeper` MCP (an unofficial integration, **write-enabled**). Pages are read and written as Markdown, and `> [!secret]` marks GM-only text. Destructive tools need `confirm=true`, so ask Wizard first.
 
 ### n8n Automation — PLANNED for this vault
 n8n is running on RaidLab (`:5678`), but no LLMWIKI ingest/maintenance workflow exists yet.
