@@ -92,6 +92,8 @@ test("helpers: titles, secrets, query cap", () => {
   assert.ok(findSecret("token: abcdef123456"));
   assert.ok(findSecret("key sk-abcdefghijklmnopqrstuvwxyz"));
   assert.equal(findSecret("Merged upstream into omi-local"), null);
+  assert.ok(findSecret("photos: https://photos.example.org/share/Ab3dEf_ghIJkl-MNopQRstuV"), "an Immich share link is a secret");
+  assert.equal(findSecret("album: https://photos.example.org/albums/0b5c2f1e-1111-2222-3333-444455556666"), null, "an album link needs a login, so it's fine");
   assert.equal(capQueryResult("short"), "short");
   assert.match(capQueryResult("x".repeat(70000)), /cut at 60000 of 70000 characters/);
 });

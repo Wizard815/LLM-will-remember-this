@@ -4,7 +4,7 @@ type: area
 area: homelab
 tags: [wiki, area, homelab, raidlab]
 created: 2026-10-27
-updated: 2026-10-27
+updated: 2026-11-27
 source: "live-check 2026-10-27"
 status: reviewed
 related: ["[[RaidLab]]", "[[Local AI]]", "[[Automation]]"]
@@ -25,11 +25,11 @@ Self-hosted infrastructure built around [[RaidLab]] (Unraid). Goal: services sta
 - **External access:** Cloudflare Tunnel + Nginx Proxy Manager under `<PUBLIC_DOMAIN>`; Tailscale; remote desktop through `PonderingOrb`
 - **Network/infra services:** Technitium DNS, Omada controller, Gluetun + VPN download clients, Guacamole, code-server
 - **Media:** Plex Pass + Sonarr/Radarr/Prowlarr/Readarr, Tautulli, Seerr, Plex-Auto-Languages → see [[Plex Media Conversion Pipeline]]
-- **Household apps:** Vaultwarden, Syncthing, Homebox, Mealie, Vikunja, Wallos, Cronicle
+- **Household apps:** Immich (photos, `:8407`, running again as of 2026-11-27), Vaultwarden, Syncthing, Homebox, Mealie, Vikunja, Wallos, Cronicle, copyparty
 - **Retired or stopped since June:**
   - **Nextcloud** retired (2026-10-27); its `mariadb-NC` database is still running and can be removed
   - Not on the server any more: Mattermost, Open WebUI, Qdrant
-  - Stopped: Immich app (waiting for the P4), Gitea, ArchiveBox, AFFiNE
+  - Stopped: Gitea, ArchiveBox, AFFiNE
 
 ## Active projects
 

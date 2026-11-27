@@ -58,6 +58,8 @@ const SECRET_PATTERNS = [
   /\bxox[abprs]-[A-Za-z0-9-]{10,}/,
   /\bAKIA[0-9A-Z]{16}\b/,
   /\b(password|passwd|api[_-]?key|secret|token)\s*[:=]\s*\S{6,}/i,
+  /* A photo share link (Immich's /share/<key>): anyone who has it sees the photos (rule 16). */
+  /https?:\/\/\S+\/share\/[A-Za-z0-9_-]{16,}/,
 ];
 
 /* ------------------------------------------------------------------ pure helpers (tested in scripts/) */

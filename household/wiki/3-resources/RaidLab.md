@@ -9,7 +9,7 @@ tags:
   - homelab
   - raidlab
 created: 2026-10-27
-updated: 2026-10-27
+updated: 2026-11-27
 source: live-check 2026-10-27
 status: reviewed
 related:
@@ -87,14 +87,13 @@ Custom networks: `ai_net` (AI services, LLMWIKI), `proxynat` (n8n, mcp-kanka), `
 | **Media** | `binhex-plexpass` · `binhex-sonarr` (8200) · `binhex-radarr` (8201) · `binhex-readarr` (8202) · `binhex-prowlarr` (8203) · `tautulli` (8210) · `Seerr` (5055) · `Plex-Auto-Languages` (unhealthy) |
 | **Downloads / VPN** | `GluetunVPN` (unhealthy) · `binhex-delugevpn` (8301) · `sabnzbdvpn` (8300) · `jackettvpn` (8302) |
 | **Network / infra** | `Nginx-Proxy-Manager-Official` · `Unraid-Cloudflared-Tunnel` · `dns-server` (Technitium) · `omada-controller` (unhealthy) · `ApacheGuacamole` · `binhex-code-server` (8108) · `qdirstat` (8103) · `fan-bridge` (5000) |
-| **Household apps** | `vaultwarden` (8120) · `binhex-syncthing` (8384) · `Homebox` (8111) · `mealiev1` (8110) · `vikunja` (3457) · `Wallos` (8109) · `croniclev2` (8105) · `dayglance` (6767) · `lifeglance` (6868) · `lastglance` (3100) · `epicgames-freegames` (3055) |
+| **Household apps** | `immich` (8407, photos; running again 2026-11-27) · `vaultwarden` (8120) · `binhex-syncthing` (8384) · `Homebox` (8111) · `mealiev1` (8110) · `vikunja` (3457) · `Wallos` (8109) · `croniclev2` (8105) · `dayglance` (6767) · `lifeglance` (6868) · `lastglance` (3100) · `epicgames-freegames` (3055) |
 | **Automation** | `n8n` (5678) · `n8n-mcp` (3456) |
 | **Gaming / voice** | `AMP` (game servers) · `TeamSpeak3` |
 | **Databases** | `mariadb-NC` (8500, Nextcloud) · `MariaDB-ManyFold` (8501) · `Redis-Manyfold` (8503) · `immich-postgresql` (8504) · `redis-immich` (8505) |
 
 ### Notable stopped containers
 
-- **Immich** app (`immich`, a CUDA image that needs NVIDIA; should work again once the P4 is back). Its postgres and redis containers are still running.
 - **Nextcloud: retired 2026-10-27.** `Nextcloud-ffmpeg` is stopped. Its database `mariadb-NC` (8500) **is still running** and the `Nextcloud` share still exists, so both can be removed whenever Wizard decides.
 - **`ollama-mi50`** (legacy inference), `LiteLLM`, `Kokoro-FastAPI-GPU`, `Hermes-Agent`, `whispercpp-transcriber`
 - The **omi** stack (6 containers, exited 2 days ago), **AFFiNE** stack, `Gitea`, `ArchiveBox`, `audiobookshelf`, `manyfold`, `homarrmain`, `Obsidian-Livesync`, `Tachidesk`, `Huntarr`, `Cleanarr`, `Membarr`, `requestrr`, `ffmpeg-nvidia`, old `obsidian`
