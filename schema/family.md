@@ -5,7 +5,8 @@ tags: [registry]
 members:
   - {"id":"wizard","name":"Wizard","role":"admin","aliases":["Wiz"],"voice":[]}
 services: []
-shared_agents: []
+shared_agents:
+  - {"id":"faith","name":"FAITH"}
 groups: []
 ---
 
