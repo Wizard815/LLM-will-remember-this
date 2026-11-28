@@ -28,6 +28,8 @@ function fakeVault(files) {
     store,
     getAbstractFileByPath: file,
     read: async (f) => store.get(f.path),
+    cachedRead: async (f) => store.get(f.path),
+    modify: async (f, data) => { store.set(f.path, data); },
     create: async (p, data) => { if (store.has(p)) throw new Error("exists"); store.set(p, data); return { path: p }; },
     process: async (f, fn) => { store.set(f.path, fn(store.get(f.path))); },
     createFolder: async () => {},
@@ -139,7 +141,22 @@ test("query_wiki says what it searches and how to treat a miss", () => {
   const { tools } = setup();
   assert.match(tools.get("query_wiki").d, /daily\/, inbox\/ and raw\/ are not searched/);
   assert.match(tools.get("query_wiki").d, /say the wiki doesn't know/);
-  assert.deepEqual([...tools.keys()].sort(), ["get_wiki", "memory_add_source", "memory_capture", "memory_log", "memory_rollover", "query_wiki", "wiki_card"]);
+  assert.deepEqual([...tools.keys()].sort(), ["get_wiki", "graph_cluster", "graph_neighbors", "graph_path", "graph_report", "graph_suggest",
+    "memory_add_source", "memory_capture", "memory_log", "memory_rollover", "query_wiki", "wiki_card"]);
+});
+
+test("graph tools on /mcp see the whole vault's wiki and check their arguments", async () => {
+  const { call, plugin, vault } = setup({
+    "wiki/3-resources/RaidLab.md": "---\ntype: resource\n---\nRuns [[Odysseus]].\n",
+    "wiki/3-resources/Odysseus.md": "---\ntype: resource\n---\nOn [[RaidLab]].\n",
+    "daily/2026-11-13.md": "Talked about [[RaidLab]].\n",
+  });
+  assert.match(await call("graph_report", {}), /^# Wiki graph\n\n2 notes, 1 connection, 1 cluster/, "only wiki/ notes are nodes");
+  assert.match(await call("graph_neighbors", { note: "raidlab" }), /Odysseus/);
+  await assert.rejects(call("graph_neighbors", { note: "RaidLab", depth: "9" }), /depth/);
+  await assert.rejects(call("graph_path", { from: "RaidLab", to: "Nope" }), /No wiki note you can see is called "Nope"/);
+  assert.match(await plugin.writeGraphReport(), /GRAPH.md rebuilt: 2 notes/, "a single-user vault's report covers its wiki/");
+  assert.match(vault.store.get("GRAPH.md"), /\[\[RaidLab\]\]/);
 });
 
 test("rolloverText swaps the daily front matter for the Source schema and keeps the body", () => {

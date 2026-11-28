@@ -1,3 +1,7 @@
 {
-  "openBehavior": "daily"
+  "openBehavior": "daily",
+  "userIgnoreFilters": [
+    "deploy/",
+    "GRAPH.md"
+  ]
 }

@@ -42,3 +42,9 @@ The third-party Obsidian plugins under .obsidian/plugins/ are not covered by
 this license; each keeps its own license (Templater is AGPL-3.0, obsidian-git
 bundles LGPL-3.0 code), except the plugins written for this vault
 (karpathywiki, llmwiki-mcp-bridge).
+
+The graph tools in llmwiki-mcp-bridge borrow ideas (clusters, hubs, bridges,
+surprising connections) from [SwarmVault](https://github.com/swarmclawai/swarmvault),
+which is MIT licensed; no SwarmVault code is copied. The trial in
+deploy/swarmvault/ installs SwarmVault itself, unmodified, under its own MIT
+license.

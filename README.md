@@ -11,6 +11,7 @@ This repo is the vault itself. Obsidian Git commits and pushes it from a running
 | Path | What it holds |
 |------|---------------|
 | `HOME.md`, `Projects.base` | Dashboard (Dataview queries) and a sortable project table |
+| `GRAPH.md` | The shared wiki as a knowledge graph: clusters, hubs, bridges, links worth adding. Rebuilt hourly by the MCP bridge |
 | `household/wiki/` | The shared wiki, organized with **PARA**: `1-projects`, `2-areas`, `3-resources`, `4-archive`, plus `logs/` |
 | `household/daily/`, `household/inbox/`, `household/raw/` | Short-term memory: daily notes, quick capture, source material waiting to be filed |
 | `people/<id>/` | Each person's private root. **Gitignored**, so it never reaches this repo |
@@ -18,11 +19,13 @@ This repo is the vault itself. Obsidian Git commits and pushes it from a running
 | `schema/family.md` | Roles, tokens and visibility for a multi-person household |
 | `schema/templates/` | Note templates (project, area, resource, log, daily, source, profile) |
 | `scripts/` | Family setup script and the test suite |
+| `deploy/swarmvault/` | A trial of [SwarmVault](https://github.com/swarmclawai/swarmvault)'s graph viewer over `household/wiki/` |
 | `.obsidian/plugins/` | The plugins the vault depends on (Local REST API, the MCP bridge, Obsidian Git, Dataview, and others) |
 
 ## How agents use it
 
 - Agents connect to the Obsidian Local REST API's `/mcp` endpoint. The bundled `llmwiki-mcp-bridge` plugin adds semantic search (`query_wiki`, `get_wiki`, `wiki_card`), memory tools (`memory_log`, `memory_capture`, `memory_rollover`, `memory_add_source`) and per-person tokens.
+- The same bridge reads the wiki as a graph (`graph_report`, `graph_neighbors`, `graph_path`, `graph_cluster`, `graph_suggest`), built from the notes' own links and only from the notes each token can read.
 - Anything may write to short-term memory. Only the Ingest and Capture workflows in `schema/agents.md` may write to `household/wiki/`.
 - The campaign tool, not this vault, holds tabletop RPG content.
 

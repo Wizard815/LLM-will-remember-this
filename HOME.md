@@ -6,7 +6,7 @@ updated: 2026-11-16
 
 # 🏠 LLMWIKI Dashboard
 
-> One wiki for the family. `household/` is shared; each person has their own private `people/<id>/` with the same PARA layout; `groups/<id>/` are shared by some of the family (a couple, the kids, a trip). Who is who → [[family|Family]] · Rules → [[agents|Agent Constitution]]
+> One wiki for the family. `household/` is shared; each person has their own private `people/<id>/` with the same PARA layout; `groups/<id>/` are shared by some of the family (a couple, the kids, a trip). Who is who → [[family|Family]] · Rules → [[agents|Agent Constitution]] · How it all connects → [[GRAPH|Wiki graph]]
 
 ## 🗺 Areas
 

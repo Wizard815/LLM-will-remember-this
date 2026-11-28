@@ -33,6 +33,7 @@ Use an OpenAI-compatible `/v1/chat/completions` endpoint on the llama.cpp ports.
 ```
 LLMWIKI/
 ├── HOME.md             # Dashboard — start here (every root, grouped by whose)
+├── GRAPH.md            # The shared wiki as a graph (made by the bridge, hourly; don't edit)
 ├── Projects.base       # Sortable/filterable project table (native Obsidian Bases)
 ├── household/          # SHARED root: the homelab, the house, trips, anything for everyone
 │   ├── inbox/          # Quick capture — see Capture workflow
@@ -411,7 +412,7 @@ Preferred write path for any agent outside the container. Registered in the Herm
 - The master key is for your own tools: backups, a wiki dashboard, an export. **Never give it to an assistant that answers people**: it would see everyone's notes. It has no folder of its own and writes nothing.
 - `whoami`'s first line says who a token is, e.g. `You are acting for: Sam (member, id sam).`, `(child, id robin)`, `(shared, id faith)`, `(shared-parents, id faith-parents)`, `(master, id master)`. FAITH reads it to check each token is the one it should be.
 
-Family MCP tools: `whoami` (call first), `family_members`, `who_is`, `context_for` (one person's context, on every change of speaker), `conversation_log` (a conversation, filed per speaker), `memory_log`, `memory_capture`, `memory_add_source`, `memory_rollover`, `notes_list`, `note_read`, `notes_search`, `query_wiki`, `note_write`. The `memory_*` tools take `person` (an id, a group, or `household`): a shared agent must always pass it, a member may name only themselves, a group they're a member of, or `household`, the admin anyone. Raw sources can only be created, and their `status` changed; `schema/` is read-only.
+Family MCP tools: `whoami` (call first), `family_members`, `who_is`, `context_for` (one person's context, on every change of speaker), `conversation_log` (a conversation, filed per speaker), `memory_log`, `memory_capture`, `memory_add_source`, `memory_rollover`, `notes_list`, `note_read`, `notes_search`, `query_wiki`, `note_write`, and the graph tools below. The `memory_*` tools take `person` (an id, a group, or `household`): a shared agent must always pass it, a member may name only themselves, a group they're a member of, or `household`, the admin anyone. Raw sources can only be created, and their `status` changed; `schema/` is read-only.
 
 **MCP tools for the admin (`/mcp`, master key):**
 
@@ -423,6 +424,7 @@ Family MCP tools: `whoami` (call first), `family_members`, `who_is`, `context_fo
 | Hand over a document for Ingest | `memory_add_source` — new `raw/sources/` file, `status: unprocessed`, never overwrites | short-term |
 | File yesterday's daily note for Ingest | `memory_rollover` — once a day | short-term → source |
 | Ingest / Capture / Maintain | built-in `vault_*` tools | long-term, write |
+| See how notes connect | `graph_report`, `graph_neighbors`, `graph_path`, `graph_cluster`, `graph_suggest` (also on `/family-mcp`) | long-term, read |
 
 Automation (n8n, Orb, Omi, UpstreamManager, Hermes hooks) uses only the `memory_*` tools, through the family endpoints with its own token (a service token for household tools like Upstream Manager, a member token for a person's Orb or Omi); the daily scheduled agent job calls `memory_rollover`, then runs Ingest. They refuse text that looks like a secret (rule 9). The built-in `vault_write` / `vault_append` / `vault_patch` / `vault_delete` / `vault_move` are guarded by the **LLMWIKI MCP Bridge** plugin: an existing `raw/` file can't be overwritten, appended to, patched, deleted or moved out (rule 1); creating a new one (Rollover) and patching its `status` front matter (Ingest step 5) still work. The guard covers MCP only — the master-key REST routes (`PUT /vault/...`) are unguarded, so anything still writing there must follow the same rule itself; `/family/vault/` is guarded. `query_wiki` has no relevance cutoff: it always returns the nearest notes, so when they don't cover the question, say the wiki doesn't know. Tests: `node --test scripts/*.test.*` (bridge, family scopes and setup script).
 
@@ -437,6 +439,14 @@ Legacy endpoint `http://ollama-mi50:11434`. Do not assume it is reachable.
 
 ### Smart Connections — LIVE
 Local embeddings inside Obsidian (`.smart-env/`). Human-side semantic search.
+
+### Wiki graph (`graph_*` tools, `GRAPH.md`) — LIVE (2026-11-28)
+The LLMWIKI MCP Bridge reads the wiki as a graph: every `wiki/` note is a node, joined by its `[[links]]` (body and front matter) and by its `area:` hub. It finds clusters of related notes, hubs, bridges between clusters, surprising connections, orphans, broken links, and links worth adding (notes that share neighbours but don't link). Each token's graph has only the notes it can read, so a note you can't see never shows up, even as a link to you.
+- `graph_neighbors` before answering about a note gives its links with the line each sits on; `graph_path` explains how two notes connect.
+- **During Ingest**, check `graph_suggest` for the note you filed and add a link only if it's true; suggestions are never applied automatically (Memory Tiers). Fix what `graph_report` lists under broken links and orphans during Maintain.
+- `GRAPH.md` at the vault root is the household's view (no private, group or grown-ups-only notes), rebuilt hourly and only rewritten when it changed; command palette: *Rebuild the wiki graph report*.
+- Logs link to everything they touched, so they count lightly and never name a cluster. A source citation into a root you can't read isn't a broken link.
+- Ideas from SwarmVault (MIT); a trial of SwarmVault itself, on `household/wiki/` only, is in `deploy/swarmvault/`.
 
 ### Dataview — LIVE (2026-11-14)
 Was missing for weeks while `HOME.md` and area hubs already used `dataview` query blocks — those were rendering as plain text. Installed; the dashboard is only trustworthy as of this date.

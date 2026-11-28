@@ -1,0 +1,23 @@
+# SwarmVault trial next to LLMWIKI. See README.md in this folder.
+services:
+  swarmvault:
+    build: .
+    container_name: swarmvault
+    restart: unless-stopped
+    # Unraid's nobody:users, so the data folder stays editable from the shares.
+    user: "${PUID:-99}:${PGID:-100}"
+    environment:
+      REFRESH_MINUTES: "60"
+      HOME: /vault/.home
+      # Optional, for sharper extraction through Argos (OpenAI-compatible):
+      ARGOS_URL: ${ARGOS_URL:-}
+      ARGOS_MODEL: ${ARGOS_MODEL:-}
+      ARGOS_API_KEY: ${ARGOS_API_KEY:-unused}
+    volumes:
+      # Only the household's long-term wiki, read-only. Never mount people/,
+      # groups/ or household/parents/: the viewer has no login.
+      - ${WIKI_HOUSEHOLD:?set WIKI_HOUSEHOLD to the vault household/wiki folder}:/wiki:ro
+      - ${SWARMVAULT_DATA:-/mnt/user/appdata/swarmvault}:/vault
+    ports:
+      # The viewer has no login. Keep it on the LAN address, never forward it.
+      - "${LAN_IP:-127.0.0.1}:3015:4123"

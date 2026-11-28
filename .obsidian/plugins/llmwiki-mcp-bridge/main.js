@@ -21,6 +21,10 @@
  *   A service token (e.g. Upstream Manager) works in household/; a shared
  *   agent (one assistant for the whole family) has no folder of its own and
  *   must name the person on every write.
+ *   graph_* tools: the wiki as a knowledge graph (clusters, hubs, bridges, paths,
+ *   suggested links) built from the notes' own links, from only the notes the
+ *   token can see. GRAPH.md at the vault root is the household's view of it,
+ *   rebuilt hourly when it changes.
  *   Groups (a couple, the kids, a trip) have a shared folder groups/<id>/:
  *   its members read and write it, its readers only read it, nobody else
  *   (not the household's shared agent) sees it. The admin sees every group.
@@ -512,6 +516,426 @@ function checkArgs(schema, args) {
   return null;
 }
 
+/* ------------------------------------------------------------------ graph: the wiki as a knowledge graph */
+
+/* The graph is built from what people and agents already wrote: every [[link]] (body and
+ * front matter) and every note's `area:` hub. Only wiki/ notes are nodes; a link to anything
+ * else (a source, schema/, HOME) is left out. It is always built from the notes one principal
+ * can see, so it never shows, counts or hints at a note they can't open.
+ * Ideas (communities, hubs, bridges, surprising links, provenance) come from SwarmVault
+ * (MIT, github.com/swarmclawai/swarmvault); the code here is our own. */
+
+const GRAPH_REPORT_PATH = "GRAPH.md";
+const AREA_HUBS = {
+  homelab: "Homelab", ai: "Local AI", automation: "Automation", hardware: "Hardware & 3D Printing", ttrpg: "TTRPG",
+  gaming: "Gaming", travel: "Outdoor & Travel", personal: "Personal", knowledge: "Knowledge",
+};
+const MAX_SNIPPET = 160;
+
+const isWikiNote = (real) => /^(?:household\/|people\/[^/]+\/|groups\/[^/]+\/)?wiki\/.+\.md$/.test(normPath(real));
+/** household, people/<id>, groups/<id>, or "" (a single-user vault). */
+function rootOfPath(real) {
+  const m = /^(household|people\/[^/]+|groups\/[^/]+)\//.exec(normPath(real));
+  return m ? m[1] : "";
+}
+const baseName = (p) => normPath(p).split("/").pop().replace(/\.md$/i, "");
+
+function frontMatter(text) {
+  const m = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/.exec(String(text || ""));
+  return m ? { yaml: m[1], length: m[0].length } : { yaml: "", length: 0 };
+}
+const fmValue = (yaml, key) => {
+  const m = new RegExp(`^${key}:\\s*(.*)$`, "m").exec(yaml);
+  return m ? m[1].trim().replace(/^["']|["']$/g, "").trim() : "";
+};
+
+/** The link targets in one wikilink or markdown link, without alias, heading or block id. */
+function linkTarget(inner) {
+  const t = String(inner).split("|")[0].split("#")[0].split("^")[0].trim();
+  return t.replace(/\.md$/i, "");
+}
+
+/** A note's title, type, area and links (each with the line it sits on), skipping code. */
+function parseNote(path, text) {
+  const s = String(text || "");
+  const fm = frontMatter(s);
+  const title = fmValue(fm.yaml, "title") || baseName(path);
+  const links = [];
+  let fence = false;
+  let key = "";
+  const fmLines = fm.length ? s.slice(0, fm.length).split("\n").length - 1 : 0;
+  const lines = s.split("\n");
+  for (const [n, rawLine] of lines.entries()) {
+    let raw = rawLine;
+    if (n < fmLines) {
+      // In front matter, a list item ("- \"[[X]]\"") is shown with its key: "related: [[X]]".
+      const k = /^([A-Za-z_][\w-]*):/.exec(raw);
+      if (k) key = k[1];
+      else if (key && /^\s*-\s/.test(raw)) raw = `${key}: ${raw.replace(/^\s*-\s*/, "").replace(/^["']|["']$/g, "")}`;
+    }
+    if (/^\s*(```|~~~)/.test(raw)) {
+      fence = !fence;
+      continue;
+    }
+    if (fence) continue;
+    const line = raw.replace(/`[^`]*`/g, "");
+    for (const m of line.matchAll(/(!?)\[\[([^\]\n]+?)\]\]/g)) {
+      const target = linkTarget(m[2]);
+      if (target) links.push({ target, embed: m[1] === "!", line: raw.trim() });
+    }
+    for (const m of line.matchAll(/\[[^\]\n]*\]\(([^)\s]+\.md)(?:#[^)]*)?\)/gi)) {
+      if (/^[a-z]+:\/\//i.test(m[1])) continue;
+      let target;
+      try {
+        target = decodeURIComponent(m[1]);
+      } catch (e) {
+        target = m[1];
+      }
+      links.push({ target: linkTarget(target), embed: false, line: raw.trim() });
+    }
+  }
+  return { path: normPath(path), title, type: fmValue(fm.yaml, "type"), area: fmValue(fm.yaml, "area").toLowerCase(), links };
+}
+
+/** Where a link from `from` lands among `paths` (Obsidian's rules, roughly), or null. */
+function resolveLink(target, from, index) {
+  const key = normPath(target).toLowerCase();
+  if (!key) return null;
+  const hits = index.filter((p) => {
+    const k = p.toLowerCase().replace(/\.md$/, "");
+    return k === key || k.endsWith(`/${key}`);
+  });
+  if (hits.length < 2) return hits[0] || null;
+  const root = rootOfPath(from);
+  return hits.sort((a, b) => (rootOfPath(b) === root) - (rootOfPath(a) === root) || a.length - b.length || a.localeCompare(b))[0];
+}
+
+const snippet = (line) => {
+  const s = String(line || "").replace(/\s+/g, " ").trim();
+  return s.length > MAX_SNIPPET ? `${s.slice(0, MAX_SNIPPET - 1)}…` : s;
+};
+
+/**
+ * Weighted Louvain (modularity, resolution 1): node id -> community index.
+ * Deterministic: nodes are visited in sorted order and ties keep the current community.
+ */
+function louvain(ids, edges) {
+  let adj = new Map(ids.map((i) => [i, new Map()]));
+  for (const { a, b, w } of edges) {
+    if (a === b) continue;
+    adj.get(a).set(b, (adj.get(a).get(b) || 0) + w);
+    adj.get(b).set(a, (adj.get(b).get(a) || 0) + w);
+  }
+  let member = new Map(ids.map((i) => [i, i])); // original node -> current super node
+  for (let level = 0; level < 20; level += 1) {
+    const nodes = [...adj.keys()].sort();
+    const k = new Map(nodes.map((i) => [i, [...adj.get(i).values()].reduce((x, y) => x + y, 0)]));
+    const m2 = [...k.values()].reduce((x, y) => x + y, 0);
+    if (!m2) break;
+    const comm = new Map(nodes.map((i) => [i, i]));
+    const tot = new Map(nodes.map((i) => [i, k.get(i)]));
+    let movedAny = false;
+    for (let pass = 0; pass < 50; pass += 1) {
+      let moved = false;
+      for (const i of nodes) {
+        const ci = comm.get(i);
+        const ki = k.get(i);
+        tot.set(ci, tot.get(ci) - ki);
+        const wTo = new Map();
+        for (const [j, w] of adj.get(i)) if (j !== i) wTo.set(comm.get(j), (wTo.get(comm.get(j)) || 0) + w);
+        let best = ci;
+        let bestGain = (wTo.get(ci) || 0) - (tot.get(ci) * ki) / m2;
+        for (const c of [...wTo.keys()].sort()) {
+          const gain = wTo.get(c) - (tot.get(c) * ki) / m2;
+          if (gain > bestGain + 1e-12) {
+            best = c;
+            bestGain = gain;
+          }
+        }
+        tot.set(best, tot.get(best) + ki);
+        if (best !== ci) {
+          comm.set(i, best);
+          moved = true;
+          movedAny = true;
+        }
+      }
+      if (!moved) break;
+    }
+    if (!movedAny) break;
+    const next = new Map();
+    for (const [i, nbrs] of adj) {
+      const ci = comm.get(i);
+      if (!next.has(ci)) next.set(ci, new Map());
+      for (const [j, w] of nbrs) {
+        const cj = comm.get(j);
+        next.get(ci).set(cj, (next.get(ci).get(cj) || 0) + w);
+      }
+    }
+    member = new Map([...member].map(([o, s]) => [o, comm.get(s)]));
+    adj = next;
+  }
+  return member;
+}
+
+/**
+ * The graph of a set of notes: files are [{ path, text }] the principal may see (real paths),
+ * show(real) is the path as they know it, within (optional) a folder as they see it. Links are
+ * resolved against every file given, so a link out of `within` isn't counted as broken.
+ */
+function buildGraph(files, show = (p) => p, within = "") {
+  const index = files.map((f) => normPath(f.path)).filter((p) => /\.md$/i.test(p));
+  const w = normPath(within || "").replace(/\/$/, "");
+  const inside = (real) => !w || show(real) === w || String(show(real)).startsWith(`${w}/`);
+  const notes = files.filter((f) => isWikiNote(f.path) && inside(normPath(f.path))).map((f) => parseNote(f.path, f.text));
+  const byPath = new Map(notes.map((n) => [n.path, n]));
+  // Logs link to everything they touched: they count, but lightly, and never name or lead anything.
+  const logs = new Set(notes.filter((n) => n.type === "log").map((n) => n.path));
+  const edges = new Map(); // "a\u0000b" (sorted) -> edge
+  const missing = new Map(); // target -> [from paths]
+  const addEdge = (from, to, kind, line) => {
+    if (from === to) return;
+    const [a, b] = from < to ? [from, to] : [to, from];
+    const key = `${a}\u0000${b}`;
+    const e = edges.get(key) || { a, b, w: 0, kinds: new Set(), evidence: [] };
+    e.w += kind === "area" || logs.has(from) ? 0.3 : 1;
+    e.kinds.add(kind);
+    if (e.evidence.length < 3) e.evidence.push({ from, to, kind, line: snippet(line) });
+    edges.set(key, e);
+  };
+  for (const n of notes) {
+    for (const l of n.links) {
+      const to = resolveLink(l.target, n.path, index);
+      if (!to) {
+        // A source citation (rule 4) may point into a root this view can't open: not broken.
+        if (/(^|\/)raw\//.test(l.target)) continue;
+        if (!missing.has(l.target)) missing.set(l.target, new Set());
+        missing.get(l.target).add(n.path);
+      } else if (byPath.has(to)) {
+        addEdge(n.path, to, l.embed ? "embed" : "link", l.line);
+      }
+    }
+    const hub = AREA_HUBS[n.area];
+    if (hub && n.type !== "area") {
+      const to = resolveLink(hub, n.path, index);
+      if (to && byPath.has(to)) addEdge(n.path, to, "area", `area: ${n.area}`);
+    }
+  }
+  const ids = notes.map((n) => n.path).sort();
+  const nbrs = new Map(ids.map((i) => [i, new Set()]));
+  for (const e of edges.values()) {
+    nbrs.get(e.a).add(e.b);
+    nbrs.get(e.b).add(e.a);
+  }
+  const connected = ids.filter((i) => nbrs.get(i).size);
+  const member = louvain(connected, [...edges.values()]);
+  // Communities, biggest first, named for their best-connected note.
+  const groups = new Map();
+  for (const i of connected) {
+    const c = member.get(i);
+    if (!groups.has(c)) groups.set(c, []);
+    groups.get(c).push(i);
+  }
+  const deg = (i) => nbrs.get(i).size;
+  const byDegree = (a, b) => logs.has(a) - logs.has(b) || deg(b) - deg(a) || byPath.get(a).title.localeCompare(byPath.get(b).title);
+  const communities = [...groups.values()]
+    .map((m) => m.sort(byDegree))
+    .sort((x, y) => y.length - x.length || byPath.get(x[0]).title.localeCompare(byPath.get(y[0]).title))
+    .map((m, i) => ({ id: `c${i + 1}`, name: byPath.get(m[0]).title, members: m }));
+  const communityOf = new Map();
+  for (const c of communities) for (const i of c.members) communityOf.set(i, c.id);
+  return {
+    notes: byPath, ids, edges: [...edges.values()], nbrs, communities, communityOf, show,
+    missing: [...missing].map(([target, from]) => ({ target, from: [...from].sort() })).sort((x, y) => y.from.length - x.from.length || x.target.localeCompare(y.target)),
+  };
+}
+
+const edgeBetween = (g, a, b) => g.edges.find((e) => (e.a === a && e.b === b) || (e.a === b && e.b === a));
+
+/** Hubs, bridges, orphans, surprising links and suggested links. */
+function analyzeGraph(g) {
+  const deg = (i) => g.nbrs.get(i).size;
+  const title = (i) => g.notes.get(i).title;
+  const lead = g.ids.filter((i) => g.notes.get(i).type !== "log");
+  const degrees = lead.map(deg);
+  const mean = degrees.reduce((x, y) => x + y, 0) / (degrees.length || 1);
+  const hubs = lead.filter((i) => deg(i) >= Math.max(3, mean * 1.5)).sort((a, b) => deg(b) - deg(a) || title(a).localeCompare(title(b))).slice(0, 5);
+  const hubSet = new Set(hubs);
+  const bridges = lead
+    .filter((i) => !hubSet.has(i))
+    .map((i) => ({ id: i, reach: new Set([...g.nbrs.get(i)].map((j) => g.communityOf.get(j)).filter((c) => c !== g.communityOf.get(i))).size }))
+    .filter((b) => b.reach >= 2)
+    .sort((a, b) => b.reach - a.reach || deg(b.id) - deg(a.id) || title(a.id).localeCompare(title(b.id)))
+    .slice(0, 8);
+  const orphans = g.ids.filter((i) => !deg(i)).sort((a, b) => title(a).localeCompare(title(b)));
+  // Surprising: a link across communities between two notes that aren't hubs (rarer = more surprising).
+  const surprising = g.edges
+    .filter((e) => g.communityOf.get(e.a) !== g.communityOf.get(e.b) && !e.kinds.has("area"))
+    .filter((e) => ![e.a, e.b].some((i) => hubSet.has(i) || ["log", "area"].includes(g.notes.get(i).type)))
+    .map((e) => ({ e, score: 1 / deg(e.a) + 1 / deg(e.b) }))
+    .sort((x, y) => y.score - x.score || title(x.e.a).localeCompare(title(y.e.a)))
+    .slice(0, 8)
+    .map((x) => x.e);
+  return { hubs, bridges, orphans, surprising };
+}
+
+/**
+ * Notes that aren't linked but share neighbours (Adamic-Adar), for Ingest to consider.
+ * `only` limits it to one note.
+ */
+function suggestLinks(g, only = null, max = 10) {
+  const deg = (i) => g.nbrs.get(i).size;
+  // Logs and area hubs connect everything by design, so sharing one says little.
+  const weak = (i) => ["log", "area"].includes(g.notes.get(i).type);
+  const out = [];
+  const firsts = only ? [only] : g.ids;
+  for (const a of firsts) {
+    if (weak(a) && !only) continue;
+    for (const b of g.ids) {
+      if (a === b || weak(b) || (!only && b < a) || g.nbrs.get(a).has(b)) continue;
+      const common = [...g.nbrs.get(a)].filter((x) => g.nbrs.get(b).has(x) && !weak(x));
+      if (common.length < 2) continue;
+      const score = common.reduce((s, x) => s + 1 / Math.log(Math.max(2, deg(x))), 0);
+      out.push({ a, b, common, score });
+    }
+  }
+  return out.sort((x, y) => y.score - x.score || x.a.localeCompare(y.a) || x.b.localeCompare(y.b)).slice(0, max);
+}
+
+/** A note named by path (as the principal sees it, with or without .md) or by title. */
+function findNode(g, name) {
+  const q = normPath(name).replace(/\.md$/i, "").toLowerCase();
+  if (!q) return { error: "Name a note." };
+  const shown = (i) => String(g.show(i)).replace(/\.md$/i, "").toLowerCase();
+  const exact = g.ids.filter((i) => shown(i) === q);
+  if (exact.length) return { id: exact[0] };
+  const byName = g.ids.filter((i) => shown(i).endsWith(`/${q}`) || g.notes.get(i).title.toLowerCase() === q);
+  if (byName.length === 1) return { id: byName[0] };
+  if (byName.length > 1) return { error: `"${name}" could be: ${byName.map((i) => g.show(i)).join(", ")}. Give the path.` };
+  return { error: `No wiki note you can see is called "${name}".` };
+}
+
+/* ---- text for people and agents */
+
+const noteRef = (g, i) => `[[${g.notes.get(i).title}]] (${g.show(i)})`;
+const kindWords = { link: "links to", embed: "embeds", area: "is in the area of" };
+function hopText(g, from, to) {
+  const e = edgeBetween(g, from, to);
+  const ev = e && (e.evidence.find((x) => x.from === from) || e.evidence[0]);
+  if (!ev) return `${g.notes.get(from).title} — ${g.notes.get(to).title}`;
+  const words = `${g.notes.get(ev.from).title} ${kindWords[ev.kind]} ${g.notes.get(ev.to).title}`;
+  return ev.kind === "area" ? `${words} (${ev.line})` : `${words}: "${ev.line}"`;
+}
+
+function graphReportText(g, { title = "Wiki graph", within = "" } = {}) {
+  const a = analyzeGraph(g);
+  const t = (i) => g.notes.get(i).title;
+  const deg = (i) => g.nbrs.get(i).size;
+  const out = [`# ${title}`, ""];
+  const n = (x, w) => `${x} ${w}${x === 1 ? "" : "s"}`;
+  out.push(`${n(g.ids.length, "note")}, ${n(g.edges.length, "connection")}, ${n(g.communities.length, "cluster")}${within ? ` (in ${within})` : ""}. Built from the notes' own \`[[links]]\` and their area hubs.`, "");
+  out.push("## Clusters", "");
+  if (!g.communities.length) out.push("- None yet: no note links to another.");
+  for (const c of g.communities) {
+    const shown = c.members.slice(0, 8).map((i) => `[[${t(i)}]]`).join(", ");
+    out.push(`- **${c.name}** (${c.id}, ${c.members.length} notes): ${shown}${c.members.length > 8 ? `, and ${c.members.length - 8} more` : ""}`);
+  }
+  out.push("", "## Hubs", "", "The notes most others connect to.", "");
+  if (!a.hubs.length) out.push("- None yet.");
+  for (const i of a.hubs) out.push(`- [[${t(i)}]]: ${deg(i)} connections`);
+  out.push("", "## Bridges", "", "Notes besides the hubs that tie clusters together. If one goes stale, the clusters drift apart.", "");
+  if (!a.bridges.length) out.push("- None yet.");
+  for (const b of a.bridges) out.push(`- [[${t(b.id)}]]: reaches ${b.reach} other clusters`);
+  out.push("", "## Surprising connections", "", "Links between two clusters that don't go through a hub.", "");
+  if (!a.surprising.length) out.push("- None yet.");
+  for (const e of a.surprising) {
+    const ev = e.evidence[0];
+    out.push(`- [[${t(ev.from)}]] → [[${t(ev.to)}]]: "${ev.line}"`);
+  }
+  out.push("", "## Links worth adding", "", "Notes that share neighbours but don't link to each other. Ingest decides; nothing is linked automatically.", "");
+  const sug = suggestLinks(g, null, 8);
+  if (!sug.length) out.push("- None yet.");
+  for (const s of sug) out.push(`- [[${t(s.a)}]] and [[${t(s.b)}]]: both link to ${s.common.slice(0, 3).map((i) => `[[${t(i)}]]`).join(", ")}`);
+  out.push("", "## Orphans", "", "Notes with no links in or out.", "");
+  if (!a.orphans.length) out.push("- None.");
+  for (const i of a.orphans) out.push(`- [[${t(i)}]] (${g.show(i)})`);
+  out.push("", "## Broken links", "", "Links to a note that doesn't exist (or that you can't see).", "");
+  if (!g.missing.length) out.push("- None.");
+  for (const m of g.missing.slice(0, 15)) out.push(`- \`[[${m.target}]]\` in ${m.from.slice(0, 3).map((i) => `[[${t(i)}]]`).join(", ")}${m.from.length > 3 ? ` and ${m.from.length - 3} more` : ""}`);
+  if (g.missing.length > 15) out.push(`- and ${g.missing.length - 15} more`);
+  return out.join("\n");
+}
+
+function neighborsText(g, id, depth = 1) {
+  const t = (i) => g.notes.get(i).title;
+  const c = g.communities.find((x) => x.id === g.communityOf.get(id));
+  const out = [`# ${noteRef(g, id)}`, "", `Cluster: ${c ? `${c.name} (${c.id})` : "none (no links)"}. ${g.nbrs.get(id).size} connections.`, ""];
+  const outs = [], ins = [], areas = [];
+  for (const j of [...g.nbrs.get(id)].sort((x, y) => t(x).localeCompare(t(y)))) {
+    const e = edgeBetween(g, id, j);
+    for (const ev of e.evidence) {
+      if (ev.kind === "area") (ev.from === id ? areas : ins).push(`- ${ev.from === id ? noteRef(g, j) : noteRef(g, ev.from)} (${ev.line})`);
+      else if (ev.from === id) outs.push(`- ${noteRef(g, j)}: "${ev.line}"`);
+      else ins.push(`- ${noteRef(g, ev.from)}: "${ev.line}"`);
+    }
+  }
+  const uniq = (xs) => [...new Set(xs)];
+  out.push("## Links to", "", ...(uniq(outs).length ? uniq(outs) : ["- None."]), "");
+  if (areas.length) out.push("## Area hub", "", ...uniq(areas), "");
+  out.push("## Linked from", "", ...(uniq(ins).length ? uniq(ins) : ["- None."]));
+  if (depth > 1) {
+    const second = new Set();
+    for (const j of g.nbrs.get(id)) for (const k of g.nbrs.get(j)) if (k !== id && !g.nbrs.get(id).has(k)) second.add(k);
+    out.push("", "## Two steps away", "", ...([...second].sort((x, y) => t(x).localeCompare(t(y))).map((k) => `- ${noteRef(g, k)}`) || []));
+    if (!second.size) out.push("- None.");
+  }
+  return out.join("\n");
+}
+
+function pathText(g, from, to) {
+  if (from === to) return "That's the same note.";
+  const prev = new Map([[from, null]]);
+  const queue = [from];
+  while (queue.length && !prev.has(to)) {
+    const i = queue.shift();
+    for (const j of [...g.nbrs.get(i)].sort()) if (!prev.has(j)) {
+      prev.set(j, i);
+      queue.push(j);
+    }
+  }
+  if (!prev.has(to)) return `No chain of links joins ${noteRef(g, from)} and ${noteRef(g, to)}.`;
+  const chain = [];
+  for (let i = to; i !== null; i = prev.get(i)) chain.unshift(i);
+  const out = [`${chain.length - 1} step${chain.length === 2 ? "" : "s"}: ${chain.map((i) => g.notes.get(i).title).join(" → ")}`, ""];
+  for (let k = 0; k + 1 < chain.length; k += 1) out.push(`${k + 1}. ${hopText(g, chain[k], chain[k + 1])}`);
+  return out.join("\n");
+}
+
+function clusterText(g, which) {
+  if (!which) {
+    if (!g.communities.length) return "No clusters yet: no wiki note you can see links to another.";
+    return g.communities.map((c) => `- ${c.id} **${c.name}**: ${c.members.length} notes`).join("\n");
+  }
+  let c = g.communities.find((x) => x.id === String(which).trim().toLowerCase());
+  if (!c) {
+    const n = findNode(g, which);
+    if (n.error) return n.error;
+    c = g.communities.find((x) => x.id === g.communityOf.get(n.id));
+    if (!c) return `${noteRef(g, n.id)} has no links, so it isn't in a cluster.`;
+  }
+  const deg = (i) => g.nbrs.get(i).size;
+  return [`# Cluster ${c.id}: ${c.name}`, "", `${c.members.length} notes, best connected first:`, "",
+    ...c.members.map((i) => `- ${noteRef(g, i)}: ${deg(i)} connections`)].join("\n");
+}
+
+function suggestText(g, id = null) {
+  const t = (i) => g.notes.get(i).title;
+  const sug = suggestLinks(g, id, 10);
+  if (!sug.length) return id ? `Nothing to suggest for ${noteRef(g, id)}.` : "Nothing to suggest yet.";
+  return [id ? `Links ${t(id)} might want:` : "Links worth adding (notes that share neighbours but don't link):", "",
+    ...sug.map((s) => `- ${noteRef(g, s.a)} ↔ ${noteRef(g, s.b)}: both link to ${s.common.slice(0, 4).map((i) => t(i)).join(", ")}`),
+    "", "Suggestions only: add a link through Ingest if it's true."].join("\n");
+}
+
 /* ------------------------------------------------------------------ plugin */
 
 const GUARDED_TOOLS = ["vault_write", "vault_append", "vault_patch", "vault_delete", "vault_move"];
@@ -544,7 +968,18 @@ class LlmwikiMcpBridge extends Plugin {
         }
       }, 1000);
       this.registerInterval(timer);
+      // GRAPH.md: the household's graph, rebuilt hourly (written only when it changed).
+      const rebuild = () => this.writeGraphReport().catch((e) => console.error("[llmwiki-mcp-bridge] graph report:", e));
+      this.registerInterval(window.setTimeout(rebuild, 30 * 1000));
+      this.registerInterval(window.setInterval(rebuild, 60 * 60 * 1000));
     });
+    if (this.addCommand) {
+      this.addCommand({
+        id: "rebuild-graph-report",
+        name: "Rebuild the wiki graph report (GRAPH.md)",
+        callback: () => this.writeGraphReport().then((r) => new Notice(r)).catch((e) => new Notice(`Graph report failed: ${e.message}`)),
+      });
+    }
   }
 
   /* The REST plugin's MCP schemas are zod types bundled inside it; an
@@ -693,6 +1128,19 @@ class LlmwikiMcpBridge extends Plugin {
       { day: optStr("Only this day, YYYY-MM-DD (before today). Omit for every open note before today.") },
       async (args) => this.memoryRollover(args, this.allRoots())
     );
+
+    // The graph tools, over every wiki/ folder (this is the master key's door).
+    for (const t of this.graphTools()) {
+      const shape = {};
+      for (const [k, v] of Object.entries(t.inputSchema.properties)) {
+        shape[k] = (t.inputSchema.required || []).includes(k) ? str(v.description) : optStr(v.description);
+      }
+      api.addMcpTool(t.name, t.description, shape, async (args) => {
+        const bad = checkArgs(t.inputSchema, args);
+        if (bad) throw new Error(`${t.name}: ${bad}`);
+        return t.run(args, null);
+      });
+    }
   }
 
   /** Every short-term root: each member, the household, or the vault root in a single-user vault. */
@@ -935,8 +1383,83 @@ class LlmwikiMcpBridge extends Plugin {
       { name: "note_write", annotations: WRITE, description: "Create, overwrite or append to a note you may write (your own folders, household/, or a group you're in). For Ingest and Capture; use the memory tools for logging. Sources in raw/ are never changed.",
         inputSchema: { type: "object", properties: { path: S("Path, e.g. 'wiki/1-projects/Sewing Quilt.md'"), content: S("Markdown"), mode: S("create (default: fails if it exists), overwrite or append", { enum: ["create", "overwrite", "append"] }) }, required: ["path", "content"] },
         run: (a, p) => this.noteWrite(a, p) },
+      ...this.graphTools(),
     ];
     return tools;
+  }
+
+  /* ---------------------------------------------------------------- the wiki as a graph */
+
+  /** Every note a principal can see, with its text (p null: the whole vault, for the master key's /mcp). */
+  async graphFiles(p) {
+    const out = [];
+    for (const f of this.app.vault.getMarkdownFiles()) {
+      // Dashboards at the vault root (HOME.md) aren't anyone's: links to them aren't broken.
+      if (p && toVirtual(f.path, p) === null && f.path.includes("/")) continue;
+      out.push({ path: f.path, text: await this.app.vault.cachedRead(f) });
+    }
+    return out;
+  }
+
+  async graphFor(p, within = "") {
+    const show = p ? (real) => toVirtual(real, p) : (real) => real;
+    if (within) {
+      const r = p ? resolvePath(within, p) : { real: normPath(within) };
+      if (r.error) throw new Error(r.error);
+    }
+    return buildGraph(await this.graphFiles(p), show, within);
+  }
+
+  graphTools() {
+    const S = (description, extra = {}) => ({ type: "string", description, ...extra });
+    const READ = { readOnlyHint: true };
+    const node = (g, name) => {
+      const r = findNode(g, name);
+      if (r.error) throw new Error(r.error);
+      return r.id;
+    };
+    return [
+      { name: "graph_report", annotations: READ, description: "The wiki as a knowledge graph, from the notes' own [[links]] and area hubs: clusters of related notes, hubs, bridges between clusters, surprising connections, links worth adding, orphans and broken links. Only notes you can see are in it.",
+        inputSchema: { type: "object", properties: { within: S("Only notes under this folder, e.g. 'household/wiki' or 'wiki' (your own); default all you can see") } },
+        run: async (a, p) => graphReportText(await this.graphFor(p, a.within), { within: a.within }) },
+      { name: "graph_neighbors", annotations: READ, description: "One wiki note's connections: what it links to and what links to it, each with the line the link sits on, and its cluster. Use it to gather context around a note before answering or filing.",
+        inputSchema: { type: "object", properties: { note: S("The note's title or path"), depth: S("1 (default) or 2 to add notes two steps away", { enum: ["1", "2"] }) }, required: ["note"] },
+        run: async (a, p) => {
+          const g = await this.graphFor(p);
+          return neighborsText(g, node(g, a.note), a.depth === "2" ? 2 : 1);
+        } },
+      { name: "graph_path", annotations: READ, description: "How two wiki notes are connected: the shortest chain of links between them, with the line behind each step.",
+        inputSchema: { type: "object", properties: { from: S("A note's title or path"), to: S("Another note's title or path") }, required: ["from", "to"] },
+        run: async (a, p) => {
+          const g = await this.graphFor(p);
+          return pathText(g, node(g, a.from), node(g, a.to));
+        } },
+      { name: "graph_cluster", annotations: READ, description: "Clusters of closely linked wiki notes. With no argument, lists them; with a cluster id (c1) or a note, lists that cluster's notes, best connected first.",
+        inputSchema: { type: "object", properties: { cluster: S("A cluster id like 'c2', or a note's title or path") } },
+        run: async (a, p) => clusterText(await this.graphFor(p), a.cluster) },
+      { name: "graph_suggest", annotations: READ, description: "Links worth adding: wiki notes that share neighbours but don't link to each other (for one note, or the whole wiki). Suggestions only; add a link through Ingest if it's true.",
+        inputSchema: { type: "object", properties: { note: S("Only suggestions for this note (title or path)") } },
+        run: async (a, p) => {
+          const g = await this.graphFor(p);
+          return suggestText(g, a.note ? node(g, a.note) : null);
+        } },
+    ];
+  }
+
+  /** GRAPH.md: the graph as the household sees it (no private, group or grown-ups-only notes). */
+  async writeGraphReport() {
+    const viewer = this.familyOn() ? { kind: "shared", id: "graph-report", name: "graph report" } : null;
+    const g = await this.graphFor(viewer);
+    const text = [
+      "---", "title: Wiki graph", "type: dashboard", "---", "",
+      "> [!info] Made by the LLMWIKI MCP Bridge from the links in the shared wiki. Rebuilt every hour, so don't edit it here. Agents: the `graph_*` tools give each person their own view.",
+      "", graphReportText(g, { title: "Wiki graph" }).replace(/^# Wiki graph\n\n/, ""), "",
+    ].join("\n");
+    const file = this.app.vault.getAbstractFileByPath(GRAPH_REPORT_PATH);
+    if (file && (await this.app.vault.read(file)) === text) return "GRAPH.md is up to date.";
+    if (file) await this.app.vault.modify(file, text);
+    else await this.app.vault.create(GRAPH_REPORT_PATH, text);
+    return `GRAPH.md rebuilt: ${g.ids.length} notes, ${g.communities.length} clusters.`;
   }
 
   relabel(text, p) {
@@ -1430,4 +1953,5 @@ module.exports.helpers = {
   dailyStatus, decodeJsonContent, sectionText, isRaw, normalizeRegistry, whoIs, principalFor, homeOf, resolvePath,
   membersMatching, resolveMember, isGenericSpeaker, speakerOf, renderTranscript, renderStructured,
   toVirtual, guardFamilyWrite, filterQueryYaml, checkArgs, groupNamed, groupsOf,
+  parseNote, resolveLink, louvain, buildGraph, analyzeGraph, suggestLinks, findNode, graphReportText, isWikiNote,
 };
