@@ -1,5 +1,7 @@
 # LLM will remember this
 
+[![License: PolyForm Shield 1.0.0](https://img.shields.io/badge/license-PolyForm%20Shield%201.0.0-blue)](LICENSE)
+
 A self-hosted Obsidian vault that AI agents and people maintain together. It's a household knowledge base: a curated wiki, short-term memory for the day, and a private space for each family member. Agents reach it over MCP.
 
 This repo is the vault itself. Obsidian Git commits and pushes it from a running Obsidian container.
@@ -42,4 +44,11 @@ for t in scripts/*.test.*; do node "$t" || echo "FAILED: $t"; done
 
 ## License
 
-MIT, see [LICENSE](LICENSE). The bundled plugins under `.obsidian/plugins/` keep their own licenses.
+LLM will remember this is source-available under the
+[PolyForm Shield License 1.0.0](LICENSE). You can read, run, change and share
+it for free, including at work. You can't sell it or offer it as a competing
+product or hosted service without permission: open an issue titled
+"License request" to ask. [LICENSING.md](LICENSING.md) explains it
+in plain English. Versions published before the switch stay under MIT.
+
+The bundled plugins under `.obsidian/plugins/` keep their own licenses.
