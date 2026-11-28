@@ -532,10 +532,10 @@ const AREA_HUBS = {
 };
 const MAX_SNIPPET = 160;
 
-const isWikiNote = (real) => /^(?:household\/|people\/[^/]+\/|groups\/[^/]+\/)?wiki\/.+\.md$/.test(normPath(real));
-/** household, people/<id>, groups/<id>, or "" (a single-user vault). */
+const isWikiNote = (real) => /^(?:household\/(?:parents\/)?|people\/[^/]+\/|groups\/[^/]+\/)?wiki\/.+\.md$/.test(normPath(real));
+/** household, household/parents, people/<id>, groups/<id>, or "" (a single-user vault). */
 function rootOfPath(real) {
-  const m = /^(household|people\/[^/]+|groups\/[^/]+)\//.exec(normPath(real));
+  const m = /^(household\/parents|household|people\/[^/]+|groups\/[^/]+)\//.exec(normPath(real));
   return m ? m[1] : "";
 }
 const baseName = (p) => normPath(p).split("/").pop().replace(/\.md$/i, "");
@@ -598,12 +598,35 @@ function parseNote(path, text) {
 }
 
 /** Where a link from `from` lands among `paths` (Obsidian's rules, roughly), or null. */
+/** Paths by lower-case file name, for resolveLink. */
+function linkIndex(paths) {
+  const byName = new Map();
+  for (const p of paths) {
+    const k = baseName(p).toLowerCase();
+    if (!byName.has(k)) byName.set(k, []);
+    byName.get(k).push(p);
+  }
+  return byName;
+}
+
+/** "../3-resources/X" from "household/wiki/1-projects/Y.md" -> "household/wiki/3-resources/X". */
+function relativeTo(from, target) {
+  const out = normPath(from).split("/").slice(0, -1);
+  for (const seg of String(target).replace(/\\/g, "/").split("/")) {
+    if (seg === "..") out.pop();
+    else if (seg && seg !== ".") out.push(seg);
+  }
+  return out.join("/");
+}
+
 function resolveLink(target, from, index) {
-  const key = normPath(target).toLowerCase();
+  const byName = Array.isArray(index) ? linkIndex(index) : index;
+  const rel = /^\.\.?\//.test(String(target));
+  const key = (rel ? relativeTo(from, target) : normPath(target)).toLowerCase();
   if (!key) return null;
-  const hits = index.filter((p) => {
+  const hits = (byName.get(key.split("/").pop()) || []).filter((p) => {
     const k = p.toLowerCase().replace(/\.md$/, "");
-    return k === key || k.endsWith(`/${key}`);
+    return rel ? k === key : k === key || k.endsWith(`/${key}`);
   });
   if (hits.length < 2) return hits[0] || null;
   const root = rootOfPath(from);
@@ -683,7 +706,7 @@ function louvain(ids, edges) {
  * resolved against every file given, so a link out of `within` isn't counted as broken.
  */
 function buildGraph(files, show = (p) => p, within = "") {
-  const index = files.map((f) => normPath(f.path)).filter((p) => /\.md$/i.test(p));
+  const index = linkIndex(files.map((f) => normPath(f.path)).filter((p) => /\.md$/i.test(p)));
   const w = normPath(within || "").replace(/\/$/, "");
   const inside = (real) => !w || show(real) === w || String(show(real)).startsWith(`${w}/`);
   const notes = files.filter((f) => isWikiNote(f.path) && inside(normPath(f.path))).map((f) => parseNote(f.path, f.text));
@@ -790,7 +813,10 @@ function suggestLinks(g, only = null, max = 10) {
   const firsts = only ? [only] : g.ids;
   for (const a of firsts) {
     if (weak(a) && !only) continue;
-    for (const b of g.ids) {
+    // Only notes two steps away can share a neighbour.
+    const twoSteps = new Set();
+    for (const x of g.nbrs.get(a)) if (!weak(x)) for (const b of g.nbrs.get(x)) twoSteps.add(b);
+    for (const b of twoSteps) {
       if (a === b || weak(b) || (!only && b < a) || g.nbrs.get(a).has(b)) continue;
       const common = [...g.nbrs.get(a)].filter((x) => g.nbrs.get(b).has(x) && !weak(x));
       if (common.length < 2) continue;
@@ -855,6 +881,14 @@ function graphReportText(g, { title = "Wiki graph", within = "" } = {}) {
   const sug = suggestLinks(g, null, 8);
   if (!sug.length) out.push("- None yet.");
   for (const s of sug) out.push(`- [[${t(s.a)}]] and [[${t(s.b)}]]: both link to ${s.common.slice(0, 3).map((i) => `[[${t(i)}]]`).join(", ")}`);
+  // Rule 14: a shared note must not link into a private, group or grown-ups-only note (only a viewer who sees both can tell).
+  const closed = (i) => /^(people|groups)\//.test(i) || grownUpsOnly(i);
+  const shared = (i) => /^household\//.test(i) && !closed(i);
+  const crossings = g.edges.flatMap((e) => e.evidence).filter((ev) => ev.kind !== "area" && shared(ev.from) && closed(ev.to));
+  if (crossings.length) {
+    out.push("", "## Links into private notes", "", "Shared notes that link into a private, group or grown-ups-only note (rule 14): the title alone can give a surprise away.", "");
+    for (const ev of crossings) out.push(`- [[${t(ev.from)}]] → ${g.show(ev.to)}`);
+  }
   out.push("", "## Orphans", "", "Notes with no links in or out.", "");
   if (!a.orphans.length) out.push("- None.");
   for (const i of a.orphans) out.push(`- [[${t(i)}]] (${g.show(i)})`);
@@ -1422,13 +1456,13 @@ class LlmwikiMcpBridge extends Plugin {
       { name: "graph_report", annotations: READ, description: "The wiki as a knowledge graph, from the notes' own [[links]] and area hubs: clusters of related notes, hubs, bridges between clusters, surprising connections, links worth adding, orphans and broken links. Only notes you can see are in it.",
         inputSchema: { type: "object", properties: { within: S("Only notes under this folder, e.g. 'household/wiki' or 'wiki' (your own); default all you can see") } },
         run: async (a, p) => graphReportText(await this.graphFor(p, a.within), { within: a.within }) },
-      { name: "graph_neighbors", annotations: READ, description: "One wiki note's connections: what it links to and what links to it, each with the line the link sits on, and its cluster. Use it to gather context around a note before answering or filing.",
+      { name: "graph_neighbors", annotations: READ, description: "One wiki note's connections: what it links to and what links to it, each with the line the link sits on, and its cluster. Use it to gather context around a note (\"what do we know about X\") before reading notes one by one.",
         inputSchema: { type: "object", properties: { note: S("The note's title or path"), depth: S("1 (default) or 2 to add notes two steps away", { enum: ["1", "2"] }) }, required: ["note"] },
         run: async (a, p) => {
           const g = await this.graphFor(p);
           return neighborsText(g, node(g, a.note), a.depth === "2" ? 2 : 1);
         } },
-      { name: "graph_path", annotations: READ, description: "How two wiki notes are connected: the shortest chain of links between them, with the line behind each step.",
+      { name: "graph_path", annotations: READ, description: "Use for \"how is X connected to Y\" questions: the shortest chain of links between two wiki notes, with the line behind each step. Faster and surer than reading notes one by one.",
         inputSchema: { type: "object", properties: { from: S("A note's title or path"), to: S("Another note's title or path") }, required: ["from", "to"] },
         run: async (a, p) => {
           const g = await this.graphFor(p);

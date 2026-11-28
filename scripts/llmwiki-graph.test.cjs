@@ -151,3 +151,15 @@ test("GRAPH.md: the household's view only, rewritten only when the graph changed
   assert.match(await plugin.writeGraphReport(), /rebuilt/);
   assert.doesNotMatch(vault.store.get("GRAPH.md"), /## Orphans\n\nNotes with no links in or out.\n\n- \[\[Garden Beds\]\]/);
 });
+
+test("graph: relative markdown links, the grown-ups' wiki, and shared notes that link into private ones", async () => {
+  const index = ["household/wiki/3-resources/Home Assistant.md", "people/sam/wiki/3-resources/Home Assistant.md"];
+  assert.equal(resolveLink("../3-resources/Home Assistant", "household/wiki/1-projects/x.md", index), "household/wiki/3-resources/Home Assistant.md");
+  assert.equal(resolveLink("./Home Assistant", "people/sam/wiki/3-resources/x.md", index), "people/sam/wiki/3-resources/Home Assistant.md");
+  assert.equal(isWikiNote("household/parents/wiki/1-projects/Gift.md"), true, "household/parents/wiki/ notes are nodes for the grown-ups");
+  const { call } = t({ [`${W}/3-resources/Pointer.md`]: "---\ntype: resource\n---\nSee [[Birthday Surprise]].\n" });
+  const sam = await call("t-sam", "graph_report");
+  assert.match(sam.text, /## Links into private notes[\s\S]*\[\[Pointer\]\] → household\/parents\/wiki\/1-projects\/Birthday Surprise\.md/, "rule 14 slips are listed for a grown-up");
+  const robin = await call("t-robin", "graph_report");
+  assert.doesNotMatch(robin.text, /Links into private notes/, "a child can't see the target, so nothing is listed");
+});

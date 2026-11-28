@@ -446,6 +446,8 @@ The LLMWIKI MCP Bridge reads the wiki as a graph: every `wiki/` note is a node, 
 - **During Ingest**, check `graph_suggest` for the note you filed and add a link only if it's true; suggestions are never applied automatically (Memory Tiers). Fix what `graph_report` lists under broken links and orphans during Maintain.
 - `GRAPH.md` at the vault root is the household's view (no private, group or grown-ups-only notes), rebuilt hourly and only rewritten when it changed; command palette: *Rebuild the wiki graph report*.
 - Logs link to everything they touched, so they count lightly and never name a cluster. A source citation into a root you can't read isn't a broken link.
+- Shared notes that link into a private, group or grown-ups-only note show under *Links into private notes* for anyone who can see both ends: fix them (rule 14).
+- Demo on fake data: `node scripts/graph-demo/edge.cjs` (edge cases, offline); `scripts/graph-demo/agent.cjs` runs a model through `/family-mcp` as each family member (OpenRouter key, about a cent).
 - Ideas from SwarmVault (MIT); a trial of SwarmVault itself, on `household/wiki/` only, is in `deploy/swarmvault/`.
 
 ### Dataview — LIVE (2026-11-14)
